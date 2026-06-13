@@ -16,6 +16,7 @@ from . import transcribe as transcribe_stage
 from . import moments as moments_stage
 from . import render as render_stage
 from . import audio as audio_stage
+from . import chat as chat_stage
 
 
 def _auto_publish(clips: list) -> None:
@@ -66,6 +67,14 @@ def run_job(job_id: str) -> None:
                     job_id, clips, reactions, job.transcript_path)
             except Exception as e:  # never let a signal kill the run
                 print(f"[audio] signal failed: {e}")
+        # chat signal: message-velocity + emote bursts (Twitch VODs with chat only)
+        if job.chat_path and CONFIG.get("signals", {}).get("chat", {}).get("enabled", True):
+            try:
+                bursts = chat_stage.find_bursts(chat_stage.load_chat(job.chat_path))
+                clips = moments_stage.apply_chat_signal(
+                    job_id, clips, bursts, job.transcript_path)
+            except Exception as e:
+                print(f"[chat] signal failed: {e}")
         for c in clips:
             store.save_clip(c)
 

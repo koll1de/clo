@@ -7,6 +7,11 @@ pyyaml==6.0.2
 
 # --- Ingest (keep this fresh; YouTube/Twitch change often) ---
 yt-dlp>=2026.6.9
+# Twitch VOD chat replay for the chat signal (optional; skipped gracefully if absent)
+chat-downloader>=0.3.0
+
+# --- Computer vision (kill-feed detection — Phase 2) ---
+opencv-python-headless==4.11.0.86
 
 # --- Transcription (runs on the 3090 via CTranslate2) ---
 faster-whisper==1.1.1

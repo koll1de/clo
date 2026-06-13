@@ -195,6 +195,56 @@ def apply_audio_signal(
     return _dedupe(clips)
 
 
+def apply_chat_signal(
+    job_id: str, clips: list[Clip], bursts: list, transcript_path: str
+) -> list[Clip]:
+    """Corroborate clips with Twitch chat bursts and surface big chat reactions
+    the transcript brain missed. Mirrors apply_audio_signal."""
+    scfg = CONFIG.get("signals", {}).get("chat", {})
+    if not scfg.get("enabled", True) or not bursts:
+        return clips
+    boost = float(scfg.get("corroborate_boost", 1.2))
+    min_level = float(scfg.get("min_burst_level", 3.0))
+    max_new = int(scfg.get("max_new_candidates", 4))
+    weights = CONFIG["priority"]
+    clip_cfg = CONFIG["clips"]
+    segments = _load_transcript(transcript_path).get("segments", [])
+
+    def overlaps_clip(b) -> Clip | None:
+        for c in clips:
+            if min(c.end, b.end) - max(c.start, b.start) > 0:
+                return c
+        return None
+
+    for b in bursts:
+        c = overlaps_clip(b)
+        if c is not None and "chat" not in c.signals:
+            c.signals.append("chat")
+            c.score = round(min(c.score * boost, 1.5), 4)
+
+    new_count = 0
+    for b in bursts:
+        if new_count >= max_new or b.level < min_level or overlaps_clip(b) is not None:
+            continue
+        half = clip_cfg["min_seconds"] / 2
+        # chat reacts a beat late, so bias the window to start before the burst
+        start = max(0.0, b.peak - half - 2.0)
+        end = start + clip_cfg["min_seconds"]
+        kind = "funny_interaction" if b.funny else "big_reaction"
+        conf = min(1.0, 0.5 + (b.level - min_level) * 0.05)
+        clips.append(Clip(
+            id=uuid.uuid4().hex[:12], job_id=job_id,
+            start=round(start, 2), end=round(end, 2), kind=kind,
+            score=round(conf * float(weights.get(kind, 0.7)), 4),
+            title=_nearest_text(segments, b.peak)[:80],
+            reason=f"Chat {'laughter' if b.funny else 'hype'} burst ({b.level}x baseline).",
+            signals=["chat"], status=ClipStatus.pending,
+        ))
+        new_count += 1
+
+    return _dedupe(clips)
+
+
 def find_transcript_moments(job_id: str, transcript_path: str) -> list[Clip]:
     cfg = CONFIG["llm"]
     weights = CONFIG["priority"]
