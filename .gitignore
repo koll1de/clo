@@ -1,0 +1,23 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# App data — VODs, rendered clips, working files, db
+data/
+*.db
+
+# Model caches
+models_cache/
+
+# Secrets (publishing tokens)
+secrets/
+*.token.json
+config.local.yaml
+
+# Local Claude Code settings (machine-specific permissions)
+.claude/settings.local.json
+
+# OS
+Thumbs.db
+.DS_Store

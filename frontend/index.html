@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Clipmaker.ai</title>
+  <style>
+    :root { --bg:#0f0f12; --panel:#1a1a20; --line:#2a2a33; --txt:#e9e9ee;
+            --muted:#9a9aa6; --accent:#f5b400; --red:#d62828; --green:#2fbf71; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:system-ui,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--txt); }
+    header { padding:16px 24px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:12px; }
+    header h1 { font-size:18px; margin:0; letter-spacing:.5px; }
+    header .dot { width:9px; height:9px; border-radius:50%; background:var(--muted); }
+    header .dot.ok { background:var(--green); }
+    main { max-width:1180px; margin:0 auto; padding:24px; }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:18px; margin-bottom:18px; }
+    .card h2 { margin:0 0 12px; font-size:13px; color:var(--muted); text-transform:uppercase; letter-spacing:.5px; }
+    label { display:block; font-size:13px; color:var(--muted); margin:10px 0 4px; }
+    input, select, textarea { width:100%; padding:9px 11px; background:#101015; border:1px solid var(--line);
+            border-radius:8px; color:var(--txt); font-size:14px; font-family:inherit; }
+    button { background:var(--accent); color:#1a1a20; border:none; border-radius:8px; padding:9px 14px;
+            font-weight:600; cursor:pointer; }
+    button.ghost { background:transparent; color:var(--txt); border:1px solid var(--line); }
+    button.green { background:var(--green); color:#0f0f12; }
+    button.red { background:var(--red); color:#fff; }
+    button:disabled { opacity:.45; cursor:default; }
+    .row { display:flex; gap:10px; align-items:center; }
+    .job { display:flex; justify-content:space-between; align-items:center; padding:10px 8px; border-radius:8px;
+            border-bottom:1px solid var(--line); font-size:14px; cursor:pointer; }
+    .job:hover { background:#15151b; }
+    .job.sel { background:#15151b; outline:1px solid var(--accent); }
+    .pill { font-size:11px; padding:3px 9px; border-radius:999px; background:#101015; border:1px solid var(--line); color:var(--muted); }
+    .pill.ready,.pill.approved { color:var(--green); border-color:var(--green); }
+    .pill.error,.pill.rejected { color:var(--red); border-color:var(--red); }
+    .pill.published { color:var(--accent); border-color:var(--accent); }
+    .muted { color:var(--muted); font-size:13px; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:16px; }
+    .clip { background:#101015; border:1px solid var(--line); border-radius:10px; overflow:hidden; display:flex; flex-direction:column; }
+    .clip.rejected { opacity:.5; }
+    .clip video { width:100%; aspect-ratio:9/16; background:#000; display:block; }
+    .clip .body { padding:10px; display:flex; flex-direction:column; gap:8px; }
+    .clip .title { font-size:14px; font-weight:600; line-height:1.25; }
+    .clip .meta { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+    .clip .reason { font-size:12px; color:var(--muted); }
+    .clip textarea { min-height:46px; resize:vertical; font-size:12px; }
+    .badge { font-size:10px; padding:2px 7px; border-radius:6px; background:#1d1d25; color:#cfcfe0; text-transform:uppercase; letter-spacing:.3px; }
+    .spinner { font-size:12px; color:var(--accent); }
+  </style>
+</head>
+<body>
+  <header>
+    <span class="dot" id="health"></span>
+    <h1>CLIPMAKER<span style="color:var(--accent)">.AI</span></h1>
+  </header>
+  <main>
+    <div class="card">
+      <h2>New clip job</h2>
+      <label>Source</label>
+      <select id="sourceType">
+        <option value="local">Local VOD file</option>
+        <option value="twitch">Twitch VOD URL</option>
+      </select>
+      <label id="srcLabel">Full path to the video file on this PC</label>
+      <input id="source" placeholder="C:\\Users\\aqwe\\Videos\\vod.mp4" />
+      <div class="row" style="margin-top:12px;">
+        <button id="go">Find clips</button>
+        <span class="muted" id="msg"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Jobs</h2>
+      <div id="jobs"><div class="muted">No jobs yet.</div></div>
+    </div>
+
+    <div class="card" id="reviewCard" style="display:none;">
+      <h2>Review queue <span id="reviewMeta" class="muted"></span></h2>
+      <div class="grid" id="clips"></div>
+    </div>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let selectedJob = null;
+    const bust = {};       // clipId -> cache-bust token, bumped after a re-render
+    const prevBusy = {};   // clipId -> last busy state, to detect re-render completion
+
+    async function checkHealth() {
+      try { const r = await fetch('/api/health'); if (r.ok) $('health').classList.add('ok'); } catch (e) {}
+    }
+
+    $('sourceType').onchange = () => {
+      const t = $('sourceType').value;
+      $('srcLabel').textContent = t === 'local' ? 'Full path to the video file on this PC' : 'Twitch VOD URL';
+      $('source').placeholder = t === 'local' ? 'C:\\Users\\aqwe\\Videos\\vod.mp4' : 'https://www.twitch.tv/videos/123456789';
+    };
+
+    $('go').onclick = async () => {
+      const source = $('source').value.trim();
+      if (!source) { $('msg').textContent = 'Enter a source first.'; return; }
+      $('msg').textContent = 'Starting…';
+      const r = await fetch('/api/jobs', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ source_type: $('sourceType').value, source }) });
+      if (!r.ok) { $('msg').textContent = 'Error: ' + (await r.text()); return; }
+      $('msg').textContent = 'Job started.'; $('source').value = '';
+      loadJobs();
+    };
+
+    async function loadJobs() {
+      const jobs = await (await fetch('/api/jobs')).json();
+      const el = $('jobs');
+      if (!jobs.length) { el.innerHTML = '<div class="muted">No jobs yet.</div>'; return; }
+      el.innerHTML = jobs.map(j => `
+        <div class="job ${selectedJob===j.id?'sel':''}" onclick="selectJob('${j.id}')">
+          <div>
+            <div>${(j.source||'').split(/[\\/]/).pop()}</div>
+            <div class="muted">${j.source_type} · ${j.id}</div>
+          </div>
+          <span class="pill ${j.status}">${j.status.replace(/_/g,' ')}</span>
+        </div>`).join('');
+    }
+
+    window.selectJob = (id) => { selectedJob = id; loadJobs(); loadClips(); };
+
+    function clipCard(c) {
+      const v = bust[c.id] ? ('?v=' + bust[c.id]) : '';
+      const disabled = c.busy ? 'disabled' : '';
+      return `
+        <div class="clip ${c.status}">
+          ${c.file_path ? `<video src="/clips/${c.id}.mp4${v}" controls preload="metadata"></video>`
+                        : `<div style="aspect-ratio:9/16;display:flex;align-items:center;justify-content:center;" class="muted">rendering…</div>`}
+          <div class="body">
+            <div class="title">${c.title || '(untitled)'}</div>
+            <div class="meta">
+              <span class="badge">${c.kind.replace(/_/g,' ')}</span>
+              <span class="badge">score ${(c.score||0).toFixed(2)}</span>
+              <span class="pill ${c.status}">${c.status}</span>
+            </div>
+            ${c.reason ? `<div class="reason">${c.reason}</div>` : ''}
+            <div class="row">
+              <button class="green" ${disabled} onclick="act('${c.id}','approve')">Approve</button>
+              <button class="red" ${disabled} onclick="act('${c.id}','reject')">Reject</button>
+              ${c.status==='approved' && !c.publishing ? `<button class="ghost" onclick="publishClip('${c.id}')">Publish</button>` : ''}
+              ${c.publishing ? '<span class="spinner">publishing…</span>' : ''}
+            </div>
+            ${publishInfo(c)}
+            <textarea id="rev-${c.id}" placeholder="Tell the AI what to change… (e.g. меньше зума, шрифт Impact, обрежь первые 2 секунды)" ${disabled}></textarea>
+            <div class="row">
+              <button class="ghost" ${disabled} onclick="revise('${c.id}')">Apply change</button>
+              ${c.busy ? '<span class="spinner">re-rendering…</span>' : ''}
+            </div>
+          </div>
+        </div>`;
+    }
+
+    async function loadClips() {
+      if (!selectedJob) return;
+      const clips = await (await fetch(`/api/jobs/${selectedJob}/clips`)).json();
+      // detect re-render completion -> bust the video cache
+      for (const c of clips) {
+        if (prevBusy[c.id] && !c.busy) bust[c.id] = Date.now();
+        prevBusy[c.id] = c.busy;
+      }
+      $('reviewCard').style.display = 'block';
+      const counts = clips.reduce((a,c)=>(a[c.status]=(a[c.status]||0)+1,a),{});
+      $('reviewMeta').textContent = `· ${clips.length} clips ` +
+        Object.entries(counts).map(([k,v])=>`· ${v} ${k}`).join(' ');
+      $('clips').innerHTML = clips.length ? clips.map(clipCard).join('')
+        : '<div class="muted">No clips yet — still finding moments…</div>';
+    }
+
+    function publishInfo(c) {
+      if (!c.publish_result) return '';
+      const parts = [];
+      for (const [plat, r] of Object.entries(c.publish_result)) {
+        if (r.ok && r.url) parts.push(`<a href="${r.url}" target="_blank" style="color:var(--green)">${plat} ✓</a>`);
+        else if (r.ok) parts.push(`<span style="color:var(--green)">${plat} ✓</span>`);
+        else parts.push(`<span style="color:var(--red)" title="${(r.error||'').replace(/"/g,'')}">${plat} ✗</span>`);
+      }
+      return `<div class="reason">${parts.join(' · ')}</div>`;
+    }
+
+    window.act = async (id, action) => {
+      await fetch(`/api/clips/${id}/${action}`, { method:'POST' });
+      loadClips();
+    };
+
+    window.publishClip = async (id) => {
+      await fetch(`/api/clips/${id}/publish`, { method:'POST' });
+      loadClips();
+    };
+
+    window.revise = async (id) => {
+      const t = $('rev-'+id);
+      const request = (t?.value || '').trim();
+      if (!request) return;
+      await fetch(`/api/clips/${id}/revise`, { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ request }) });
+      loadClips();
+    };
+
+    checkHealth(); loadJobs();
+    setInterval(() => { loadJobs(); loadClips(); }, 3000);
+  </script>
+</body>
+</html>

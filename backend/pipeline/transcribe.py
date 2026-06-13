@@ -1,0 +1,77 @@
+"""Stage 2 — transcribe the VOD audio (Russian) on the GPU with faster-whisper.
+
+Produces a transcript JSON with segments and word-level timestamps, which later
+stages use both for caption rendering and for finding spoken/funny moments.
+"""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from ..config import CONFIG, Paths
+from ..ffmpeg import extract_audio
+from ..models import Job
+
+_model = None  # lazily loaded, kept warm between jobs
+
+
+def _get_model():
+    global _model
+    if _model is None:
+        from .. import cuda
+        cuda.enable()  # register CUDA DLL dirs before loading the model
+        from faster_whisper import WhisperModel
+        cfg = CONFIG["transcribe"]
+        _model = WhisperModel(
+            cfg["model"], device=cfg["device"], compute_type=cfg["compute_type"]
+        )
+    return _model
+
+
+def unload_model() -> None:
+    """Free the whisper model from VRAM (called before the LLM stage so they don't
+    both sit in the 24 GB at once)."""
+    global _model
+    if _model is not None:
+        del _model
+        _model = None
+        import gc
+        gc.collect()
+
+
+def transcribe(job: Job) -> Job:
+    assert job.vod_path, "ingest must run before transcribe"
+    work_audio = Paths.work / f"{job.id}.wav"
+    extract_audio(job.vod_path, work_audio)
+
+    cfg = CONFIG["transcribe"]
+    model = _get_model()
+    segments, info = model.transcribe(
+        str(work_audio),
+        language=cfg["language"],
+        word_timestamps=True,
+        vad_filter=True,
+    )
+
+    out = {
+        "language": info.language,
+        "duration": info.duration,
+        "segments": [],
+    }
+    for seg in segments:
+        out["segments"].append({
+            "start": seg.start,
+            "end": seg.end,
+            "text": seg.text.strip(),
+            "words": [
+                {"start": w.start, "end": w.end, "word": w.word}
+                for w in (seg.words or [])
+            ],
+        })
+
+    transcript_path = Paths.work / f"{job.id}.transcript.json"
+    with open(transcript_path, "w", encoding="utf-8") as f:
+        json.dump(out, f, ensure_ascii=False, indent=2)
+
+    job.transcript_path = str(transcript_path)
+    return job

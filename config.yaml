@@ -1,0 +1,63 @@
+# Clipmaker.ai settings. Edit freely — restart the app to apply.
+
+paths:
+  data_dir: data            # vods/, clips/, work/, app.db all live here
+
+ingest:
+  download_chat: true       # also pull Twitch chat for VOD URLs
+
+transcribe:
+  model: large-v3           # faster-whisper model (large-v3 = best, fits in 24GB)
+  language: ru              # stream is mostly Russian
+  device: cuda
+  compute_type: float16     # fast + accurate on a 3090
+
+clips:
+  min_seconds: 15
+  max_seconds: 45
+
+# Which kinds of moments to look for, most important first.
+# Weights bias the ranking when many candidates compete.
+priority:
+  funny_interaction: 1.0    # teammates / jokes / chat / friends / hard laughing / talking to chat
+  irl_interruption: 0.95    # screams loud -> parents/family walk in & react (viral gold)
+  big_reaction: 0.8
+  ace: 0.6
+  clutch: 0.5
+  multikill_deagle: 0.55    # 3-4 headshot deagle strings etc.
+
+llm:
+  model: qwen3:30b          # local Ollama model (MoE, 256K ctx) that reads the transcript
+  host: http://localhost:11434
+  num_ctx: 16384            # context tokens per request (KV cache must fit in spare VRAM)
+  chunk_minutes: 10         # analyze the transcript in windows of this many minutes
+  overlap_seconds: 45       # overlap between windows so moments on a boundary aren't lost
+  think: false              # qwen3 reasoning mode off -> faster, clean JSON for extraction
+
+edit:
+  subtitles: true           # master toggle; can override per-clip in the UI
+  subtitle_font: Segoe Black # must be a Cyrillic-capable font (see backend/editplan.py FONTS)
+  reframe_mode: fill_crop    # fill_crop (zoomed, immersive) or fit_blur (full width + blurred bg)
+  reframe_zoom: 1.0
+  zoom_punch_ins: true
+  speed_ramps: true
+  sound_effects: true
+  killfeed_highlights: true
+  intro_hook: true
+
+review:
+  hands_off: false          # true = skip review queue, auto-publish everything
+
+publish:
+  auto_on_approve: true       # when you approve a clip, publish it to enabled platforms
+  secrets_dir: secrets        # holds client_secret.json + saved tokens (git-ignored)
+  youtube:
+    enabled: false            # set true after following SETUP_PUBLISHING.md
+    privacy: private          # private | unlisted | public (start private to be safe)
+    category_id: "20"         # 20 = Gaming
+    title_suffix: " #Shorts"  # appended so YouTube treats the upload as a Short
+    description: "Auto-clipped from my Twitch stream. twitch.tv/"
+    tags: ["cs2", "counterstrike", "shorts", "twitch", "кс2"]
+  tiktok:
+    enabled: false            # requires a TikTok developer app (see SETUP_PUBLISHING.md)
+    mode: draft               # 'draft' = push to your TikTok inbox/drafts; you tap Post

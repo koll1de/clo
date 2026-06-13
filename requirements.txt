@@ -1,0 +1,24 @@
+# --- Web app / API ---
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+python-multipart==0.0.20
+pyyaml==6.0.2
+
+# --- Ingest (keep this fresh; YouTube/Twitch change often) ---
+yt-dlp>=2026.6.9
+
+# --- Transcription (runs on the 3090 via CTranslate2) ---
+faster-whisper==1.1.1
+# CUDA runtime libs that CTranslate2 needs (so we don't depend on a system CUDA install)
+nvidia-cublas-cu12==12.4.5.8
+nvidia-cudnn-cu12==9.6.0.74
+
+# --- Publishing (YouTube Data API) ---
+google-api-python-client==2.156.0
+google-auth-oauthlib==1.2.1
+google-auth-httplib2==0.2.0
+
+# --- Misc ---
+requests==2.32.3
+numpy==2.2.1
