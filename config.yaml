@@ -83,6 +83,18 @@ sfx:
   dir: assets/sfx           # folder of .mp3 files; delete ones you don't want the AI to use
   volume: 0.8               # playback volume of the chosen SFX (mixed over the clip audio)
 
+# Background music bed the AI picks by mood (downloaded via download_music.py). The track
+# plays quietly UNDER the clip and auto-ducks whenever his voice gets loud (rages/hype),
+# returning when he calms. calm = boring/low-action AND rage clips; hype = many kills/plays.
+music:
+  enabled: true
+  dir: assets/music
+  volume: 0.18              # background level (low — under the clip audio, but audible)
+  duck_ratio: 12            # how hard the music ducks under his voice (higher = more)
+  tracks:
+    calm: calm.mp3          # Oblivion - Harvest Dawn
+    hype: hype.mp3          # high-energy track for big plays
+
 edit:
   subtitles: false          # OFF — Renyan-style clips have no running captions
   subtitle_font: Bahnschrift # nicer modern condensed font (Cyrillic-capable); see editplan.py FONTS

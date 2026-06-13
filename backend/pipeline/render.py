@@ -128,6 +128,8 @@ def render(plan: EditPlan, clip_id: str, transcript_path: str | None = None) -> 
            if e.type == "sfx" and e.params.get("file") and Path(e.params["file"]).exists()]
     wm = plan.watermark
     wm_on = bool(wm.enabled and wm.image and Path(wm.image).exists())
+    mus = plan.music
+    mus_on = bool(mus.enabled and mus.file and Path(mus.file).exists())
 
     # ffmpeg runs with cwd=work (so the ass=<basename> path resolves), so the source
     # must be absolute — a relative VOD path would otherwise be looked for under work/.
@@ -138,10 +140,14 @@ def render(plan: EditPlan, clip_id: str, transcript_path: str | None = None) -> 
     wm_idx = 1 + len(sfx)
     if wm_on:
         cmd += ["-i", str(Path(wm.image).resolve())]
+    mus_idx = 1 + len(sfx) + (1 if wm_on else 0)
+    if mus_on:
+        cmd += ["-i", str(Path(mus.file).resolve())]
 
-    if sfx or wm_on:
+    if sfx or wm_on or mus_on:
         # ffmpeg forbids -vf alongside -filter_complex, so the video chain lives in the graph.
         fc = []
+        # ---- video chain (+ optional watermark overlay) ----
         if wm_on:
             ww = max(2, int(W * max(0.05, min(0.9, wm.scale))))
             op = max(0.0, min(1.0, wm.opacity))
@@ -156,18 +162,37 @@ def render(plan: EditPlan, clip_id: str, transcript_path: str | None = None) -> 
             fc.append(f"[vbase][wm]overlay=(W-w)/2:{oy}[vout]")
         else:
             fc.append(f"[0:v]{vf}[vout]")
-        # audio: mix sfx onto the clip audio (each delayed to its t0), else pass it through.
-        if sfx:
-            labels = ["[0:a]"]
-            for i, e in enumerate(sfx, start=1):
-                delay = int(max(0.0, e.t0) * 1000)
-                vol = float(e.params.get("volume", 1.0))
-                fc.append(f"[{i}:a]adelay={delay}|{delay},volume={vol}[s{i}]")
-                labels.append(f"[s{i}]")
-            fc.append(f"{''.join(labels)}amix=inputs={len(labels)}:duration=first:dropout_transition=0[aout]")
-            cmd += ["-filter_complex", ";".join(fc), "-map", "[vout]", "-map", "[aout]", "-r", str(plan.fps)]
+
+        # ---- audio chain: voice (+ ducked music bed) (+ sfx) ----
+        mix: list[str] = []
+        if mus_on:
+            # split the voice: one copy to keep, one as the sidechain KEY that ducks the music
+            fc.append("[0:a]asplit=2[amain][akey]")
+            mvol = max(0.0, min(1.0, mus.volume))
+            ratio = max(1.0, min(20.0, mus.duck_ratio))
+            # music trimmed to clip length + lowered to a background level, then ducked under
+            # his voice (loud voice -> music drops; returns when he's quiet again)
+            fc.append(f"[{mus_idx}:a]atrim=0:{dur:.3f},asetpts=N/SR/TB,volume={mvol}[mus0]")
+            fc.append(f"[mus0][akey]sidechaincompress=threshold=0.03:ratio={ratio}:"
+                      f"attack=20:release=500[musd]")
+            mix += ["[amain]", "[musd]"]
         else:
-            cmd += ["-filter_complex", ";".join(fc), "-map", "[vout]", "-map", "0:a", "-r", str(plan.fps)]
+            mix.append("[0:a]")
+        for i, e in enumerate(sfx, start=1):
+            delay = int(max(0.0, e.t0) * 1000)
+            vol = float(e.params.get("volume", 1.0))
+            fc.append(f"[{i}:a]adelay={delay}|{delay},volume={vol}[s{i}]")
+            mix.append(f"[s{i}]")
+
+        if len(mix) == 1:
+            amap = mix[0]                       # just the original voice — no mixing needed
+        else:
+            # normalize=0 keeps the voice full under the bed; a limiter guards against clipping
+            fc.append(f"{''.join(mix)}amix=inputs={len(mix)}:normalize=0:"
+                      f"duration=first:dropout_transition=0[amx]")
+            fc.append("[amx]alimiter=limit=0.95[aout]")
+            amap = "[aout]"
+        cmd += ["-filter_complex", ";".join(fc), "-map", "[vout]", "-map", amap, "-r", str(plan.fps)]
     else:
         cmd += ["-vf", vf, "-r", str(plan.fps)]
 

@@ -162,6 +162,7 @@ class VisionVerdict:
     clip_end: float
     sfx: str = ""           # chosen sound-effect name (or "" for none)
     sfx_time: float = 0.0   # absolute seconds where the SFX should hit
+    music: str = ""         # chosen background mood: '', 'calm', or 'hype'
 
 
 def _sample_frames(vod_path: str, start: float, end: float, n: int, max_w: int = 768):
@@ -220,21 +221,29 @@ def analyze_clip(vod_path: str, start: float, end: float, *, frames: int = 8,
         f"clip_start) where it should hit. Available sounds: {', '.join(sfx_names)}."
         if sfx_names else ""
     )
+    music_on = bool(CONFIG.get("music", {}).get("enabled", True))
+    music_note = (
+        "\n\nBACKGROUND MUSIC: pick a music mood for this clip. 'calm' = boring / low-action / "
+        "downtime clips AND rage clips (calm Oblivion music plays under his anger). 'hype' = "
+        "clips with many kills or genuinely good plays. 'none' = no music. The track plays "
+        "quietly and automatically ducks out while he's loud (raging/hyped) and returns when "
+        "he calms, so choose by the clip's overall vibe."
+        if music_on else ""
+    )
     user = (
         f"These {len(imgs)} frames span {start:.0f}s to {end:.0f}s of the stream, in order "
         f"({labels}). Judge whether this is a clipworthy CS2 Short and pick the tight 15-45s "
-        f"cut using those timestamps.{talk}{audio_note}{sfx_note}"
+        f"cut using those timestamps.{talk}{audio_note}{sfx_note}{music_note}"
     )
-    schema = _SCHEMA
+    extra_props: dict = {}
     if sfx_names:
-        schema = {
-            **_SCHEMA,
-            "properties": {
-                **_SCHEMA["properties"],
-                "sfx": {"type": "string", "enum": sfx_names + ["none"]},
-                "sfx_time": {"type": "number"},
-            },
-        }
+        extra_props["sfx"] = {"type": "string", "enum": sfx_names + ["none"]}
+        extra_props["sfx_time"] = {"type": "number"}
+    if music_on:
+        extra_props["music"] = {"type": "string", "enum": ["calm", "hype", "none"]}
+    schema = _SCHEMA
+    if extra_props:
+        schema = {**_SCHEMA, "properties": {**_SCHEMA["properties"], **extra_props}}
     try:
         r = llm.chat_vision(_SYSTEM, user, imgs, schema)
     except llm.OllamaError as e:
@@ -259,6 +268,9 @@ def analyze_clip(vod_path: str, start: float, end: float, *, frames: int = 8,
     if sfx.lower() == "none" or sfx not in sfx_names:   # guard against junk / 'none'
         sfx = ""
     sfx_time = float(r.get("sfx_time", 0.0) or 0.0)
+    music = str(r.get("music", "") or "").strip().lower()
+    if music not in ("calm", "hype"):
+        music = ""
 
     return VisionVerdict(
         clipworthy=bool(r.get("clipworthy")),
@@ -272,4 +284,5 @@ def analyze_clip(vod_path: str, start: float, end: float, *, frames: int = 8,
         clip_end=round(ce, 2),
         sfx=sfx,
         sfx_time=round(sfx_time, 2),
+        music=music,
     )

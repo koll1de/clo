@@ -107,6 +107,14 @@ class Watermark(BaseModel):
     scale: float = 0.30        # watermark width as a fraction of the clip width
 
 
+class Music(BaseModel):
+    """Background music bed, laid under the clip and auto-ducked under his voice."""
+    enabled: bool = False
+    file: str = ""             # absolute path to the chosen track
+    volume: float = 0.18       # background level (low)
+    duck_ratio: float = 12.0   # how hard it ducks when his voice is loud
+
+
 class Effect(BaseModel):
     type: Literal["zoom", "speed", "sfx"]
     t0: float                  # clip-relative seconds
@@ -127,6 +135,7 @@ class EditPlan(BaseModel):
     intro_hook: IntroHook = Field(default_factory=IntroHook)
     question_card: QuestionCard = Field(default_factory=QuestionCard)
     watermark: Watermark = Field(default_factory=Watermark)
+    music: Music = Field(default_factory=Music)
     effects: list[Effect] = Field(default_factory=list)
 
 
@@ -195,4 +204,17 @@ def default_plan(source: str, clip, edit_cfg: dict) -> EditPlan:
                 type="sfx", t0=round(t0, 2),
                 params={"file": str(sfx_path), "volume": float(scfg.get("volume", 0.8))},
             ))
+
+    # Background music bed the vision gate chose (renderer ducks it under his voice).
+    mood = (getattr(clip, "music", "") or "").strip().lower()
+    mcfg = CONFIG.get("music", {})
+    if mcfg.get("enabled", True) and mood in ("calm", "hype"):
+        track = (mcfg.get("tracks", {}) or {}).get(mood, f"{mood}.mp3")
+        mpath = ROOT / mcfg.get("dir", "assets/music") / track
+        if mpath.exists():
+            plan.music = Music(
+                enabled=True, file=str(mpath),
+                volume=float(mcfg.get("volume", 0.18)),
+                duck_ratio=float(mcfg.get("duck_ratio", 12)),
+            )
     return plan

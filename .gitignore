@@ -12,6 +12,8 @@ models_cache/
 
 # Generated sound-effects library (regenerate via download_sfx.py)
 assets/sfx/
+# Downloaded music beds (regenerate via download_music.py) — copyrighted, not committed
+assets/music/
 
 # Secrets (publishing tokens + API keys)
 secrets/
