@@ -86,8 +86,6 @@
     let selectedJob = null;
     const bust = {};       // clipId -> cache-bust token, bumped after a re-render
     const prevBusy = {};   // clipId -> last busy state, to detect re-render completion
-    let lastClipsSig = ''; // signature of the rendered grid; skip rebuild if unchanged
-                           // (rebuilding the grid recreates <video> tags and kills playback)
 
     async function checkHealth() {
       try { const r = await fetch('/api/health'); if (r.ok) $('health').classList.add('ok'); } catch (e) {}
@@ -126,36 +124,44 @@
 
     window.selectJob = (id) => { selectedJob = id; loadJobs(); loadClips(); };
 
-    function clipCard(c) {
+    function videoHtml(c) {
       const v = bust[c.id] ? ('?v=' + bust[c.id]) : '';
+      return c.file_path
+        ? `<video src="/clips/${c.id}.mp4${v}" controls preload="metadata"></video>`
+        : `<div style="aspect-ratio:9/16;display:flex;align-items:center;justify-content:center;" class="muted">rendering…</div>`;
+    }
+
+    function bodyInner(c) {
       const disabled = c.busy ? 'disabled' : '';
       return `
-        <div class="clip ${c.status}">
-          ${c.file_path ? `<video src="/clips/${c.id}.mp4${v}" controls preload="metadata"></video>`
-                        : `<div style="aspect-ratio:9/16;display:flex;align-items:center;justify-content:center;" class="muted">rendering…</div>`}
-          <div class="body">
-            <div class="title">${c.title || '(untitled)'}</div>
-            <div class="meta">
-              <span class="badge">${c.kind.replace(/_/g,' ')}</span>
-              <span class="badge">score ${(c.score||0).toFixed(2)}</span>
-              ${(c.signals||[]).map(s=>`<span class="badge sig">${s}</span>`).join('')}
-              <span class="pill ${c.status}">${c.status}</span>
-            </div>
-            ${c.reason ? `<div class="reason">${c.reason}</div>` : ''}
-            <div class="row">
-              <button class="green" ${disabled} onclick="act('${c.id}','approve')">Approve</button>
-              <button class="red" ${disabled} onclick="act('${c.id}','reject')">Reject</button>
-              ${c.status==='approved' && !c.publishing ? `<button class="ghost" onclick="publishClip('${c.id}')">Publish</button>` : ''}
-              ${c.publishing ? '<span class="spinner">publishing…</span>' : ''}
-            </div>
-            ${publishInfo(c)}
-            <textarea id="rev-${c.id}" placeholder="Tell the AI what to change… (e.g. меньше зума, шрифт Impact, обрежь первые 2 секунды)" ${disabled}></textarea>
-            <div class="row">
-              <button class="ghost" ${disabled} onclick="revise('${c.id}')">Apply change</button>
-              ${c.busy ? '<span class="spinner">re-rendering…</span>' : ''}
-            </div>
-          </div>
+        <div class="title">${c.title || '(untitled)'}</div>
+        <div class="meta">
+          <span class="badge">${c.kind.replace(/_/g,' ')}</span>
+          <span class="badge">score ${(c.score||0).toFixed(2)}</span>
+          ${(c.signals||[]).map(s=>`<span class="badge sig">${s}</span>`).join('')}
+          <span class="pill ${c.status}">${c.status}</span>
+        </div>
+        ${c.reason ? `<div class="reason">${c.reason}</div>` : ''}
+        <div class="row">
+          <button class="green" ${disabled} onclick="act('${c.id}','approve')">Approve</button>
+          <button class="red" ${disabled} onclick="act('${c.id}','reject')">Reject</button>
+          ${c.status==='approved' && !c.publishing ? `<button class="ghost" onclick="publishClip('${c.id}')">Publish</button>` : ''}
+          ${c.publishing ? '<span class="spinner">publishing…</span>' : ''}
+        </div>
+        ${publishInfo(c)}
+        <textarea id="rev-${c.id}" placeholder="Tell the AI what to change… (e.g. меньше зума, шрифт Impact, обрежь первые 2 секунды)" ${disabled}></textarea>
+        <div class="row">
+          <button class="ghost" ${disabled} onclick="revise('${c.id}')">Apply change</button>
+          ${c.busy ? '<span class="spinner">re-rendering…</span>' : ''}
         </div>`;
+    }
+
+    // Everything that affects a card EXCEPT the live <video> position and the
+    // textarea the user may be typing in. If this is unchanged we touch nothing.
+    function cardSig(c) {
+      return [c.status, c.busy?1:0, c.publishing?1:0, c.file_path?1:0, bust[c.id]||0,
+              c.title, (c.score||0).toFixed(2), (c.signals||[]).join(','),
+              c.reason||'', JSON.stringify(c.publish_result||null)].join('|');
     }
 
     async function loadClips() {
@@ -170,15 +176,44 @@
       const counts = clips.reduce((a,c)=>(a[c.status]=(a[c.status]||0)+1,a),{});
       $('reviewMeta').textContent = `· ${clips.length} clips ` +
         Object.entries(counts).map(([k,v])=>`· ${v} ${k}`).join(' ');
-      // Only rebuild the grid when something actually changed — otherwise the poll
-      // would recreate the <video> elements every 3s and interrupt playback.
-      const sig = selectedJob + '|' + clips.map(c =>
-        `${c.id}:${c.status}:${c.busy?1:0}:${c.publishing?1:0}:${c.file_path?1:0}:${bust[c.id]||0}:${c.last_request||''}`
-      ).join('|');
-      if (sig === lastClipsSig) return;
-      lastClipsSig = sig;
-      $('clips').innerHTML = clips.length ? clips.map(clipCard).join('')
-        : '<div class="muted">No clips yet — still finding moments…</div>';
+
+      const grid = $('clips');
+      if (!clips.length) { grid.innerHTML = '<div class="muted">No clips yet — still finding moments…</div>'; return; }
+      if (grid.querySelector('.muted')) grid.innerHTML = '';
+
+      // Incrementally update each card so a playing <video> (and a textarea being
+      // typed in) is never recreated by the 3s poll. Only changed cards are touched.
+      const seen = new Set();
+      for (const c of clips) {
+        seen.add(c.id);
+        let card = document.getElementById('clip-' + c.id);
+        if (!card) {
+          card = document.createElement('div');
+          card.className = 'clip ' + c.status;
+          card.id = 'clip-' + c.id;
+          card.innerHTML = videoHtml(c) + '<div class="body">' + bodyInner(c) + '</div>';
+          card.dataset.sig = cardSig(c);
+          card.dataset.bust = String(bust[c.id] || 0);
+          grid.appendChild(card);
+          continue;
+        }
+        if (card.dataset.sig === cardSig(c)) continue;   // nothing relevant changed
+        card.className = 'clip ' + c.status;
+        // refresh the video node only when the render actually changed
+        const newBust = String(bust[c.id] || 0);
+        if (card.dataset.bust !== newBust || (c.file_path && !card.querySelector('video'))) {
+          const tmp = document.createElement('div');
+          tmp.innerHTML = videoHtml(c);
+          card.replaceChild(tmp.firstElementChild, card.firstElementChild);
+          card.dataset.bust = newBust;
+        }
+        card.querySelector('.body').innerHTML = bodyInner(c);
+        card.dataset.sig = cardSig(c);
+      }
+      // drop cards for clips that no longer exist
+      for (const card of [...grid.querySelectorAll('.clip')]) {
+        if (!seen.has(card.id.slice(5))) card.remove();
+      }
     }
 
     function publishInfo(c) {
