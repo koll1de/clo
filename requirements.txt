@@ -27,6 +27,8 @@ google-auth-httplib2==0.2.0
 # --- Misc ---
 requests==2.32.3
 numpy==2.2.1
+python-dotenv==1.0.1   # loads ANTHROPIC_API_KEY (and friends) from a .env at the repo root
+Pillow==11.0.0         # generates the channel watermark PNG (Twitch glyph + nickname)
 
 # --- Optional: Claude API (only needed when provider: anthropic is set in config.yaml) ---
 anthropic>=0.69.0

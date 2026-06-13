@@ -7,6 +7,15 @@ import yaml
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT / "config.yaml"
 
+# Load a .env file (if present) before anything reads os.environ — this is how the
+# Anthropic API key reaches llm.py: put ANTHROPIC_API_KEY=... in a .env at the repo
+# root (git-ignored). Existing real env vars win over .env (override=False).
+try:
+    from dotenv import load_dotenv
+    load_dotenv(ROOT / ".env", override=False)
+except ImportError:
+    pass  # python-dotenv not installed; rely on real env vars / secrets file instead
+
 
 def load_config() -> dict:
     with open(CONFIG_PATH, "r", encoding="utf-8") as f:

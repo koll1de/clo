@@ -65,8 +65,10 @@ _SYSTEM = (
     "talking to someone in the room.\n"
     "3. tips_to_chat — he addresses chat directly, gives a tip, tells a short story, or "
     "answers a question (this maps to an on-screen question card).\n"
-    "4. big_reaction — a strong emotional spike (rage, shock, hype) that reads well even "
-    "without seeing the play.\n"
+    "4. big_reaction — a strong emotional spike (rage, shock, GENUINE hype) that reads well "
+    "even without seeing the play. Beware sarcasm: a positive-sounding line ('nice', "
+    "'impressive') right after a loss or a teammate's mistake is disappointment, not hype — "
+    "don't flag that as a big_reaction.\n"
     "5. story_banter — a short funny/interesting self-contained tangent.\n\n"
     "Rules:\n"
     "- start/end MUST be in seconds, taken from the line timestamps; start at the line "
@@ -136,6 +138,16 @@ def _nearest_text(segments: list[dict], t: float) -> str:
     return best
 
 
+def _window_text(segments: list[dict], start: float, end: float, pad: float = 2.0) -> str:
+    """The dialogue spoken within [start-pad, end+pad] as labelled lines — fed to the
+    vision gate so it can judge verbal comedy/banter, not just what's on screen."""
+    return "\n".join(
+        f"[{s['start']:.0f}] {s['text'].strip()}"
+        for s in segments
+        if s["end"] > start - pad and s["start"] < end + pad and (s.get("text") or "").strip()
+    )
+
+
 def apply_audio_signal(
     job_id: str, clips: list[Clip], reactions: list, transcript_path: str
 ) -> list[Clip]:
@@ -144,10 +156,8 @@ def apply_audio_signal(
     scfg = CONFIG.get("signals", {}).get("audio", {})
     if not scfg.get("enabled", True) or not reactions:
         return clips
-    boost = float(scfg.get("corroborate_boost", 1.2))
     min_level = float(scfg.get("min_reaction_level", 3.0))
     max_new = int(scfg.get("max_new_candidates", 4))
-    weights = CONFIG["priority"]
     clip_cfg = CONFIG["clips"]
     data = _load_transcript(transcript_path)
     segments = data.get("segments", [])
@@ -163,9 +173,9 @@ def apply_audio_signal(
     for r in reactions:
         c = overlaps_clip(r)
         if c is not None and "audio" not in c.signals:
-            c.signals.append("audio")
-            c.score = round(min(c.score * boost, 1.5), 4)
+            c.signals.append("audio")  # tag only; the AI sets the score, not a boost
             c.audio_peak = round(min(max(r.peak, c.start), c.end), 2)
+            c.audio_level = round(float(r.level), 2)  # how loud the vocal reaction was (x baseline)
 
     # 2) new candidates from strong, uncovered reactions
     new_count = 0
@@ -185,9 +195,9 @@ def apply_audio_signal(
             id=uuid.uuid4().hex[:12], job_id=job_id,
             start=round(start, 2), end=round(end, 2),
             kind="big_reaction",
-            score=round(conf * float(weights.get("big_reaction", 0.8)), 4),
+            score=round(conf, 4),
             title=title, reason=f"Loud reaction ({r.level}x baseline) detected in audio.",
-            audio_peak=round(r.peak, 2), signals=["audio"],
+            audio_peak=round(r.peak, 2), audio_level=round(float(r.level), 2), signals=["audio"],
             status=ClipStatus.pending,
         )
         clips.append(clip)
@@ -204,10 +214,8 @@ def apply_chat_signal(
     scfg = CONFIG.get("signals", {}).get("chat", {})
     if not scfg.get("enabled", True) or not bursts:
         return clips
-    boost = float(scfg.get("corroborate_boost", 1.2))
     min_level = float(scfg.get("min_burst_level", 3.0))
     max_new = int(scfg.get("max_new_candidates", 4))
-    weights = CONFIG["priority"]
     clip_cfg = CONFIG["clips"]
     segments = _load_transcript(transcript_path).get("segments", [])
 
@@ -220,8 +228,7 @@ def apply_chat_signal(
     for b in bursts:
         c = overlaps_clip(b)
         if c is not None and "chat" not in c.signals:
-            c.signals.append("chat")
-            c.score = round(min(c.score * boost, 1.5), 4)
+            c.signals.append("chat")  # tag only; the AI sets the score
 
     new_count = 0
     for b in bursts:
@@ -236,7 +243,7 @@ def apply_chat_signal(
         clips.append(Clip(
             id=uuid.uuid4().hex[:12], job_id=job_id,
             start=round(start, 2), end=round(end, 2), kind=kind,
-            score=round(conf * float(weights.get(kind, 0.7)), 4),
+            score=round(conf, 4),
             title=_nearest_text(segments, b.peak)[:80],
             reason=f"Chat {'laughter' if b.funny else 'hype'} burst ({b.level}x baseline).",
             signals=["chat"], status=ClipStatus.pending,
@@ -246,10 +253,11 @@ def apply_chat_signal(
     return _dedupe(clips)
 
 
-def vision_verify(job_id: str, vod_path: str, clips: list[Clip]) -> list[Clip]:
-    """The gate: the vision model WATCHES each candidate and we keep only the ones it
-    judges genuinely clipworthy, taking its title/kind/hook/score as authoritative.
-    This is what removes the context-free 'clip of nothing' candidates."""
+def vision_verify(job_id: str, vod_path: str, clips: list[Clip],
+                  transcript_path: str = "") -> list[Clip]:
+    """The gate: the vision model WATCHES each candidate (and reads what was SAID during it)
+    and we keep only the ones it judges genuinely clipworthy, taking its title/kind/hook/score
+    as authoritative. This is what removes the context-free 'clip of nothing' candidates."""
     from . import vision
     vcfg = CONFIG.get("signals", {}).get("vision", {})
     if not vcfg.get("enabled", True) or not clips:
@@ -259,13 +267,16 @@ def vision_verify(job_id: str, vod_path: str, clips: list[Clip]) -> list[Clip]:
     max_verify = int(vcfg.get("max_verify", 24))
     min_len = float(CONFIG["clips"]["min_seconds"])
     max_len = float(CONFIG["clips"]["max_seconds"])
+    segments = _load_transcript(transcript_path).get("segments", []) if transcript_path else []
 
     # only spend vision compute on the most promising candidates
     cands = sorted(clips, key=lambda c: c.score, reverse=True)[:max_verify]
     kept: list[Clip] = []
     for c in cands:
+        dialogue = _window_text(segments, c.start, c.end) if segments else ""
         v = vision.analyze_clip(vod_path, c.start, c.end, frames=frames,
-                                min_len=min_len, max_len=max_len)
+                                min_len=min_len, max_len=max_len, transcript=dialogue,
+                                audio_level=getattr(c, "audio_level", 0.0))
         if v is None:
             continue  # couldn't see it -> don't risk a bad clip
         if not v.clipworthy or v.score < min_score:
@@ -278,6 +289,8 @@ def vision_verify(job_id: str, vod_path: str, clips: list[Clip]) -> list[Clip]:
         c.hook = v.hook
         c.reason = v.reason or c.reason
         c.score = round(v.score, 4)
+        c.sfx = v.sfx
+        c.sfx_time = v.sfx_time
         if "vision" not in c.signals:
             c.signals.append("vision")
         kept.append(c)
@@ -292,23 +305,20 @@ def apply_killfeed_signal(
     corroborate any spoken hype that overlaps them."""
     if not sequences:
         return clips
-    weights = CONFIG["priority"]
-    clip_cfg = CONFIG["clips"]
     segments = _load_transcript(transcript_path).get("segments", [])
 
     for ks in sequences:
         # corroborate an overlapping spoken moment (his hype during the play)
         for c in clips:
             if min(c.end, ks.end) - max(c.start, ks.start) > 0 and "killfeed" not in c.signals:
-                c.signals.append("killfeed")
-                c.score = round(min(c.score * 1.2, 1.5), 4)
+                c.signals.append("killfeed")  # tag only; the AI sets the score
         # peak-centred window so the vision pass can pick the tight 15-45s cut
         start = max(0.0, ks.peak - 22.0)
         end = ks.peak + 8.0
         clips.append(Clip(
             id=uuid.uuid4().hex[:12], job_id=job_id,
             start=round(start, 2), end=round(end, 2), kind=ks.kind,
-            score=round(0.85 * float(weights.get(ks.kind, 0.6)), 4),
+            score=0.6,  # neutral triage prior; the vision gate sets the real score
             title=_nearest_text(segments, ks.peak)[:80] or "Kill feed action",
             reason=f"Kill-feed activity spike ({ks.kills}x baseline).",
             audio_peak=round(ks.peak, 2), signals=["killfeed"],
@@ -319,7 +329,6 @@ def apply_killfeed_signal(
 
 def find_transcript_moments(job_id: str, transcript_path: str) -> list[Clip]:
     cfg = CONFIG["llm"]
-    weights = CONFIG["priority"]
     clip_cfg = CONFIG["clips"]
     data = _load_transcript(transcript_path)
     segments = data.get("segments", [])
@@ -351,7 +360,9 @@ def find_transcript_moments(job_id: str, transcript_path: str) -> list[Clip]:
                 end = start + clip_cfg["max_seconds"]
             kind = m["kind"]
             conf = max(0.0, min(1.0, float(m.get("confidence", 0.5))))
-            score = conf * float(weights.get(kind, 0.5))
+            # The AI owns scoring now: the brain's own confidence is the pre-vision triage
+            # score; the vision gate sets the final score for clips it keeps.
+            score = conf
             raw.append(Clip(
                 id=uuid.uuid4().hex[:12],
                 job_id=job_id,

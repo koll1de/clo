@@ -115,14 +115,19 @@ def render(plan: EditPlan, clip_id: str, transcript_path: str | None = None) -> 
     if needs_ass:
         captions_mod.build_ass(plan, transcript_path, ass_path)
         _stage_font(plan.captions.font)
+        if plan.intro_hook.enabled and plan.intro_hook.text.strip():
+            _stage_font(plan.intro_hook.font)   # hook may use a different font (Impact / Cyrillic)
         vf_parts.append(f"ass={ass_path.name}:fontsdir=.")
     vf = ",".join(vf_parts)
 
     dur = max(0.1, plan.end - plan.start)
+    W, H = plan.width, plan.height
 
     # Sound-effect overlays: mix each onto the original audio at its t0 (only real files).
     sfx = [e for e in plan.effects
            if e.type == "sfx" and e.params.get("file") and Path(e.params["file"]).exists()]
+    wm = plan.watermark
+    wm_on = bool(wm.enabled and wm.image and Path(wm.image).exists())
 
     # ffmpeg runs with cwd=work (so the ass=<basename> path resolves), so the source
     # must be absolute — a relative VOD path would otherwise be looked for under work/.
@@ -130,19 +135,39 @@ def render(plan: EditPlan, clip_id: str, transcript_path: str | None = None) -> 
     cmd = [ffmpeg_bin(), "-y", "-ss", f"{plan.start:.3f}", "-t", f"{dur:.3f}", "-i", source]
     for e in sfx:
         cmd += ["-i", str(e.params["file"])]
+    wm_idx = 1 + len(sfx)
+    if wm_on:
+        cmd += ["-i", str(Path(wm.image).resolve())]
 
-    if sfx:
-        # ffmpeg forbids -vf alongside -filter_complex, so the video chain lives in the
-        # graph too. Each sfx input is delayed to its t0 (ms) and amixed with clip audio.
-        fc = [f"[0:v]{vf}[vout]"]
-        labels = ["[0:a]"]
-        for i, e in enumerate(sfx, start=1):
-            delay = int(max(0.0, e.t0) * 1000)
-            vol = float(e.params.get("volume", 1.0))
-            fc.append(f"[{i}:a]adelay={delay}|{delay},volume={vol}[s{i}]")
-            labels.append(f"[s{i}]")
-        fc.append(f"{''.join(labels)}amix=inputs={len(labels)}:duration=first:dropout_transition=0[aout]")
-        cmd += ["-filter_complex", ";".join(fc), "-map", "[vout]", "-map", "[aout]", "-r", str(plan.fps)]
+    if sfx or wm_on:
+        # ffmpeg forbids -vf alongside -filter_complex, so the video chain lives in the graph.
+        fc = []
+        if wm_on:
+            ww = max(2, int(W * max(0.05, min(0.9, wm.scale))))
+            op = max(0.0, min(1.0, wm.opacity))
+            # centre the watermark over the GAMEPLAY region (below the facecam band if present)
+            if plan.reframe.mode == "facecam_top" and plan.facecam.present:
+                top_h = round(H * min(0.7, max(0.15, plan.facecam.band)))
+                oy = f"{top_h}+(H-{top_h}-h)/2"
+            else:
+                oy = "(H-h)/2"
+            fc.append(f"[0:v]{vf}[vbase]")
+            fc.append(f"[{wm_idx}:v]scale={ww}:-1,format=rgba,colorchannelmixer=aa={op}[wm]")
+            fc.append(f"[vbase][wm]overlay=(W-w)/2:{oy}[vout]")
+        else:
+            fc.append(f"[0:v]{vf}[vout]")
+        # audio: mix sfx onto the clip audio (each delayed to its t0), else pass it through.
+        if sfx:
+            labels = ["[0:a]"]
+            for i, e in enumerate(sfx, start=1):
+                delay = int(max(0.0, e.t0) * 1000)
+                vol = float(e.params.get("volume", 1.0))
+                fc.append(f"[{i}:a]adelay={delay}|{delay},volume={vol}[s{i}]")
+                labels.append(f"[s{i}]")
+            fc.append(f"{''.join(labels)}amix=inputs={len(labels)}:duration=first:dropout_transition=0[aout]")
+            cmd += ["-filter_complex", ";".join(fc), "-map", "[vout]", "-map", "[aout]", "-r", str(plan.fps)]
+        else:
+            cmd += ["-filter_complex", ";".join(fc), "-map", "[vout]", "-map", "0:a", "-r", str(plan.fps)]
     else:
         cmd += ["-vf", vf, "-r", str(plan.fps)]
 

@@ -106,7 +106,8 @@ def build_ass(plan: EditPlan, transcript_path: str | None, out_path: Path) -> Pa
     outline = _ass_color(cap.outline_color)
 
     hook = plan.intro_hook
-    hook_family = font_family(plan.captions.font)
+    hook_family = font_family(hook.font)
+    hook_color = _ass_color(hook.color)
     header = f"""[Script Info]
 ScriptType: v4.00+
 PlayResX: {plan.width}
@@ -117,7 +118,7 @@ ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Main,{family},{cap.size},{primary},{outline},&H00000000,-1,0,0,0,100,100,0,0,1,{cap.outline},0,2,80,80,{cap.margin_v},204
-Style: Hook,{hook_family},104,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,7,0,8,90,90,300,204
+Style: Hook,{hook_family},104,{hook_color},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,7,0,8,90,90,300,204
 Style: QTag,{family},48,&H00FFFFFF,&H002828D6,&H00000000,-1,0,0,0,100,100,0,0,3,14,0,7,0,0,0,204
 Style: QBox,{family},58,&H00FFFFFF,&H00231F1E,&H64000000,-1,0,0,0,100,100,0,0,3,18,6,7,0,0,0,204
 Style: QBoxEdge,{family},58,&H00D8D0CF,&H00D8D0CF,&H00000000,-1,0,0,0,100,100,0,0,3,23,0,7,0,0,0,204
@@ -128,8 +129,20 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     lines = []
     if hook.enabled and hook.text.strip():
-        htext = hook.text.strip().upper().replace("{", "(").replace("}", ")")
-        lines.append(f"Dialogue: 1,{_ts(0)},{_ts(hook.seconds)},Hook,,0,0,0,,{htext}")
+        htext = _wrap(hook.text.strip().upper().replace("{", "(").replace("}", ")"), 16)
+        clip_dur = plan.end - plan.start
+        hook_end = clip_dur if hook.persist else min(hook.seconds, clip_dur)
+        # place the title just BELOW the facecam band so it never covers the webcam
+        if plan.reframe.mode == "facecam_top" and plan.facecam.present:
+            band = min(0.7, max(0.15, plan.facecam.band))
+            hook_y = int(plan.height * band) + 36
+        else:
+            hook_y = 140
+        hook_x = plan.width // 2
+        lines.append(
+            f"Dialogue: 1,{_ts(0)},{_ts(hook_end)},Hook,,0,0,0,,"
+            f"{{\\an8\\pos({hook_x},{hook_y})}}{htext}"
+        )
     for seg in segments:
         s = seg["start"] - plan.start
         e = seg["end"] - plan.start

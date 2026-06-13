@@ -18,8 +18,10 @@ clips:
   min_seconds: 15
   max_seconds: 45
 
-# Which kinds of moments to look for, most important first.
-# Weights bias the ranking when many candidates compete.
+# Editorial priority — the order the AI is told to favour (this intent lives in the
+# vision/transcript prompts). NOTE: these numbers are no longer used as score multipliers;
+# the AI now sets the score itself (the vision gate's score is authoritative). Kept here as
+# a readable statement of intent.
 priority:
   funny_interaction: 1.0    # teammates / jokes / chat / friends / hard laughing / talking to chat
   irl_interruption: 0.95    # screams loud -> parents/family walk in & react (viral gold)
@@ -29,19 +31,19 @@ priority:
   multikill_deagle: 0.55    # 3-4 headshot deagle strings etc.
 
 llm:
-  provider: ollama          # ollama (local, free) | anthropic (Claude API, paid, best picks)
-  model: qwen3:30b          # local Ollama model (MoE, 256K ctx) that reads the transcript
+  provider: anthropic       # ollama (local, free) | anthropic (Claude API, paid, best picks)
+  model: qwen3:30b          # local Ollama model (used only when provider: ollama)
   host: http://localhost:11434
-  num_ctx: 16384            # context tokens per request (KV cache must fit in spare VRAM)
+  num_ctx: 16384            # context tokens per request (only used by the ollama provider)
   chunk_minutes: 10         # analyze the transcript in windows of this many minutes
   overlap_seconds: 45       # overlap between windows so moments on a boundary aren't lost
-  think: false              # qwen3 reasoning mode off -> faster, clean JSON for extraction
+  think: false              # qwen3 reasoning mode off -> faster, clean JSON (ollama only)
   anthropic:                # used only when provider: anthropic
     # Pick any current Claude model: claude-opus-4-8 (top judgment) |
-    # claude-sonnet-4-6 (cheaper) | claude-haiku-4-5 (cheapest). Transcript work is
-    # cheap on tokens either way, so opus is a fine default here.
-    model: claude-opus-4-8
-    # API key: set the ANTHROPIC_API_KEY env var, or save it in secrets/anthropic_api_key.txt
+    # claude-sonnet-4-6 (cheaper/faster) | claude-haiku-4-5 (cheapest). Transcript work is
+    # cheap on tokens, so sonnet gives near-opus picks at a fraction of the cost.
+    model: claude-sonnet-4-6
+    # API key: put ANTHROPIC_API_KEY in a .env at the repo root (or set the env var)
 
 # Extra moment signals layered on top of the transcript brain.
 signals:
@@ -55,16 +57,16 @@ signals:
     # so if you want to economise, drop frames_per_clip or use claude-sonnet-4-6 here.
     anthropic_model: claude-opus-4-8
     frames_per_clip: 8        # frames sampled across each candidate (also used to pick the cut)
-    min_score: 0.55           # gate; raise toward 0.7 for fewer/stronger clips, lower for more
+    min_score: 0.45           # gate; raise toward 0.7 for fewer/stronger clips, lower for more
     max_verify: 24            # cap how many candidates we run the vision model on per VOD
   audio:
     enabled: true             # find loudness/excitement spikes (screams, hype, hard laughing)
-    corroborate_boost: 1.2    # multiply a clip's score when a loud reaction overlaps it
+    corroborate_boost: 1.2    # (unused — the AI sets the score now; kept for reference)
     min_reaction_level: 2.5   # a spike this many× louder than baseline becomes a candidate
     max_new_candidates: 18    # propose generously; the vision gate filters out the weak ones
   chat:
     enabled: true             # Twitch chat message-velocity + emote spikes (VOD URLs only)
-    corroborate_boost: 1.2
+    corroborate_boost: 1.2    # (unused — the AI sets the score now; kept for reference)
     min_burst_level: 3.0      # messages/sec this many× the median can become its own clip
     max_new_candidates: 4
   killfeed:
@@ -74,6 +76,12 @@ signals:
     spike_factor: 1.6         # kill-feed activity this many× the baseline = a candidate window
     max_candidates: 14        # cap kill-feed candidate windows (the vision gate filters them)
     window_seconds: 4.0       # min gap between separate activity spikes
+
+# Sound effects the vision AI may attach to a clip (downloaded via download_sfx.py).
+sfx:
+  enabled: true             # let the AI punctuate a clip with a meme SFX when it fits
+  dir: assets/sfx           # folder of .mp3 files; delete ones you don't want the AI to use
+  volume: 0.8               # playback volume of the chosen SFX (mixed over the clip audio)
 
 edit:
   subtitles: false          # OFF — Renyan-style clips have no running captions
@@ -85,6 +93,14 @@ edit:
   sound_effects: true
   killfeed_highlights: true
   intro_hook: true
+  hook_font: Impact         # on-screen title font (auto-swaps to Arial Black for Russian text)
+  hook_color: "#FFD400"     # title colour — yellow
+  hook_persist: true        # keep the title on screen for the whole clip (not just the intro)
+  watermark:
+    enabled: true
+    image: assets/watermark.png   # regenerate/replace via: python make_watermark.py <nickname>
+    opacity: 0.5              # 0..1
+    scale: 0.30              # watermark width as a fraction of the clip width
   # Streamer webcam location in the source (fractions of the frame). Auto-detected per
   # job when possible; these are the fallback/defaults (Renyan = top-left).
   facecam:

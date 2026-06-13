@@ -10,10 +10,14 @@ data/
 # Model caches
 models_cache/
 
-# Secrets (publishing tokens)
+# Generated sound-effects library (regenerate via download_sfx.py)
+assets/sfx/
+
+# Secrets (publishing tokens + API keys)
 secrets/
 *.token.json
 config.local.yaml
+.env
 
 # Local Claude Code settings (machine-specific permissions)
 .claude/settings.local.json

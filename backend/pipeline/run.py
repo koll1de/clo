@@ -88,7 +88,8 @@ def run_job(job_id: str) -> None:
         # vision gate: the model WATCHES each candidate and keeps only the good ones
         if CONFIG.get("signals", {}).get("vision", {}).get("enabled", True):
             try:
-                clips = moments_stage.vision_verify(job_id, job.vod_path, clips)
+                clips = moments_stage.vision_verify(job_id, job.vod_path, clips,
+                                                     job.transcript_path)
             except Exception as e:
                 print(f"[vision] verify failed: {e}")
         for c in clips:
