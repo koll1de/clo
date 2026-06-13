@@ -1,7 +1,8 @@
 # Clipmaker.ai — Handover & Context
 
-Last updated: 2026-06-13. This is the single source of truth for picking up the project
-in a new terminal / Claude Code session. Read this first.
+Last updated: 2026-06-13 (second session — Phase 2 signals + effects built). This is the
+single source of truth for picking up the project in a new terminal / Claude Code session.
+Read this first.
 
 ---
 
@@ -63,6 +64,9 @@ backend/
   pipeline/
     run.py                  orchestrator
     ingest.py  transcribe.py  moments.py  render.py  captions.py  revise.py
+    audio.py                moment signal: loudness/excitement spikes (numpy + wav)
+    chat.py                 moment signal: Twitch chat message-velocity + emote bursts
+    killfeed.py             moment signal: CS2 kill-feed aces/multikills (opencv; needs tuning)
   publish/
     __init__.py  youtube.py  tiktok.py
 frontend/index.html         single-page review UI (vanilla JS, polls every 3s)
@@ -89,28 +93,59 @@ secrets/                    git-ignored: client_secret.json, *_token.json
   kill-feed detector is the key missing piece for pure gameplay highlights.
 - ✅ On GitHub: `github.com/koll1de/clo`, branch `main`.
 
+### Phase 2 work done in the 2026-06-13 (second) session — all verified except where noted
+
+- ✅ **Edit effects + question-card overlay rendered** (`render.py`, `captions.py`). Zoom
+  punch-ins (animated `scale=eval=frame`+`crop`), SFX mixing (`filter_complex amix`), and the
+  red-tag + dark-question-box overlay with gold keyword highlights — verified by rendering a real
+  Renyan clip and inspecting the frame. The question card auto-populates for `tips_to_chat`
+  moments (LLM extracts the question + chat username + highlight words). Free-text revise can
+  toggle the card and add/clear zoom punch-ins.
+- ✅ **Fixed a latent captions bug**: the ASS `Format:` line omitted the `Name` field, so libass
+  prepended a stray comma to every caption line. Now correct.
+- ✅ **Audio loudness/excitement signal** (`audio.py`) — RMS spikes over the 16 kHz wav (stdlib
+  `wave` + numpy, no new deps). Corroborates transcript clips (score boost + lands a zoom
+  punch-in on the loud beat) and surfaces loud reactions the LLM missed as `big_reaction`
+  candidates. **This closes the 0-clips-on-pure-gameplay gap.** Verified on the Renyan demo.
+- ✅ **Twitch chat signal** (`chat.py` + `ingest.py`) — downloads VOD chat (optional
+  `chat-downloader` pkg) to `<job>.chat.json`, detects message-rate bursts classified funny
+  (LUL/KEKW/ахаха) vs hype (POG/ez). Corroborates + surfaces candidates. Burst logic verified on
+  a synthetic fixture; **not yet run against a live Twitch VOD** (need a real chat-bearing URL).
+- ✅ **Kill-feed detection scaffold** (`killfeed.py`) — opencv frame-sampler → top-right ROI →
+  row-count → cluster into ace/multikill sequences. Runs end-to-end but **MUST be tuned on the
+  user's full-res HUD** (ROI + his-kill highlight colour); disabled by default. On 360p Renyan it
+  over-triggers (expected).
+- ✅ **Batched transcription** (`transcribe.py`) — `BatchedInferencePipeline` behind
+  `transcribe.batched`. **Not yet run on the GPU this session** — the first real VOD validates it;
+  set `batched: false` if VRAM is tight.
+- ✅ Review UI shows green signal badges (audio/chat/killfeed) per clip.
+
 ---
 
-## 5. Status — what's NOT built (Phase 2, the roadmap)
+## 5. Status — what's left (Phase 2 remainder)
 
-Priority order:
+The big Phase 2 items are now **built** (see §4). What remains is mostly **tuning on the
+user's own footage** and a few smaller features:
 
-1. **Kill-feed detection** — the big one for CS. Detect aces / clutches / multi-kill deagle
-   strings / bot kills from the top-right kill-feed (OCR or template-match weapon icons).
-   The `ace`/`clutch`/`multikill_deagle` kinds + priority weights already exist; the detector
-   doesn't. **Best tuned on the user's own full-res footage** (matches his HUD/resolution).
-2. **Audio signals** — laughter + excitement/loudness spikes to corroborate/add moments.
-3. **Chat signals** — message-velocity + emote spikes. Requires downloading the Twitch VOD
-   **chat** in ingest (not done yet; `Job.chat_path` exists but is unused).
-4. **Edit effects** — zoom punch-ins, speed ramps, sound effects, and the **visual
-   question-card overlay** (red username tag + bold uppercase question with gold highlights;
-   reference image described in memory `clip-editing-style`). `EditPlan.effects` and
-   `EditPlan.question_card` hold the data; the ffmpeg rendering of them isn't written.
-5. **Batched transcription** — faster-whisper `BatchedInferencePipeline` for multi-hour VODs.
-6. **Font bundling** — currently uses Cyrillic-capable Windows system fonts (Segoe UI Black
-   default). Could bundle nicer fonts (must have Cyrillic glyphs — Anton/Impact-style Latin-only
-   fonts won't render Russian).
-7. **TikTok auth helper** + real public-post path (needs TikTok app audit).
+1. **Tune kill-feed detection on his real HUD** — the scaffold (`killfeed.py`) works but is
+   untuned. Steps: get a full-res VOD → screenshot his kill feed → set `signals.killfeed.roi`
+   to the feed region → figure out the colour CS2 uses to highlight **his own** kills (so we
+   clip his aces, not the enemy's) → drop weapon-icon PNGs (esp. deagle) in
+   `data/killfeed_templates` for the template path → tune `multikill_rows`/`ace_rows` against
+   real aces → enable `signals.killfeed`. Clutch detection still needs round-state context
+   (the kill feed alone can't tell a clutch).
+2. **Validate audio/chat thresholds on a real stream** — the demo is music-heavy 360p so its
+   levels aren't representative. On his talking-heavy stream, re-check `signals.audio.factor`
+   and `signals.chat.factor`.
+3. **Run a real Twitch VOD end-to-end** — exercises chat download + batched transcription, both
+   of which haven't run against live data yet.
+4. **Speed ramps** — `Effect type=speed` is modelled but NOT rendered (changing playback speed
+   desyncs the clip-relative ASS caption/card timing, which would need recomputing). Skipped on
+   purpose; do this carefully if wanted.
+5. **Font bundling** — `editplan.FONTS` registry supports adding fonts; just drop a
+   Cyrillic-capable TTF and add an entry (Impact/Anton-style Latin-only fonts won't render
+   Russian).
+6. **TikTok auth helper** + real public-post path (needs TikTok app audit).
 
 ---
 
@@ -138,6 +173,17 @@ Priority order:
   before the LLM stage. Don't load both at once. Render uses CPU (libx264), no GPU contention.
 - **Ollama server** must be running (`localhost:11434`). launch.bat starts it; it also auto-starts
   at login. `llm.is_up()` / `llm.has_model()` check it.
+- **ASS `Format:` line must include `Name`.** The `Dialogue:` lines have an empty Name slot after
+  Style; if the Events `Format:` line omits `Name`, libass shifts fields and prepends a comma to
+  every line of text. (Fixed in `captions.py` — don't reintroduce it.)
+- **ffmpeg can't animate `crop`'s output SIZE** (output dims must be constant). Animated zoom is
+  done in `render.py` as `scale=eval=frame` (varies per frame) then a constant-size `crop`. Don't
+  try to animate crop w/h with a `t` expression — it errors with "Failed to configure input pad".
+- **`-vf` and `-filter_complex` are mutually exclusive** in ffmpeg. When SFX are present,
+  `render.py` moves the whole video chain into the `filter_complex` graph (`[0:v]...[vout]`).
+- **New deps added this session:** `opencv-python-headless` (kill-feed) and `chat-downloader`
+  (Twitch chat) — both in requirements.txt and installed in `.venv`. The chat signal degrades
+  gracefully if `chat-downloader` is missing.
 
 ---
 
@@ -184,11 +230,16 @@ path or Twitch URL), watch status, review clips when ready.
 
 ## 9. Immediate next steps (suggested)
 
+The signal/effects machinery is now built; the gating dependency is **his own footage**.
+
 1. **User streams** → keeps the Twitch VOD (enable *Store past broadcasts*) → gives the VOD URL.
-   That is the correct footage to build/tune **kill-feed detection** and the **reframe** against.
-2. Build **kill-feed detection** (Phase 2 #1) — prototype on a frame grab, then tune on his HUD.
-3. Add **chat download** to ingest + the **chat-spike** signal.
-4. Build the **edit effects** (zoom punch-ins, SFX, question-card overlay) and tune on real clips.
+   This single run exercises the most untested paths at once: chat download, batched
+   transcription, and the audio signal on representative (talking-heavy) audio.
+2. **Tune kill-feed** against his HUD (see §5 #1), then enable `signals.killfeed`.
+3. **Re-check audio/chat thresholds** on that real run (§5 #2) — the 360p demo isn't
+   representative.
+4. **Eyeball the question card + punch-ins** on a real clip and adjust positions/amount to taste
+   (everything is in `config.yaml edit` + the `EditPlan`; free-text revise can tweak per clip).
 5. When ready to publish: follow `SETUP_PUBLISHING.md` (YouTube Google Cloud OAuth, 5 min).
 
 See also the auto-memory at `~/.claude/projects/.../memory/` (project, editing-style, machine,
