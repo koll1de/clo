@@ -31,6 +31,24 @@ def _ck(job_id: str) -> None:
         raise JobCancelled()
 
 
+_GAMEPLAY_KINDS = {"ace", "clutch", "multikill", "insane_play", "multikill_deagle"}
+
+
+def _ensure_gameplay_layouts(clips: list, minimum: int = 2) -> None:
+    """Guarantee at least `minimum` clips use the no-webcam 'gameplay' layout (variety).
+    If the AI didn't pick enough, promote the most gameplay-driven clips (by kind, then score)."""
+    gp = [c for c in clips if getattr(c, "layout", "facecam") == "gameplay"]
+    if len(gp) >= minimum or len(clips) <= minimum:
+        return
+    pool = [c for c in clips if getattr(c, "layout", "facecam") != "gameplay"]
+    pool.sort(key=lambda c: (c.kind in _GAMEPLAY_KINDS, c.score), reverse=True)
+    for c in pool:
+        if len(gp) >= minimum:
+            break
+        c.layout = "gameplay"
+        gp.append(c)
+
+
 def _auto_publish(clips: list) -> None:
     """Approve every clip and publish to enabled platforms (hands-off mode)."""
     from ..publish import publish_clip, any_success
@@ -104,6 +122,7 @@ def run_job(job_id: str) -> None:
                                                      job.transcript_path)
             except Exception as e:
                 print(f"[vision] verify failed: {e}")
+        _ensure_gameplay_layouts(clips, int(CONFIG.get("edit", {}).get("min_gameplay_clips", 2)))
         for c in clips:
             store.save_clip(c)
         _ck(job_id)

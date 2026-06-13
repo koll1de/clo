@@ -132,16 +132,18 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         htext = _wrap(hook.text.strip().upper().replace("{", "(").replace("}", ")"), 16)
         clip_dur = plan.end - plan.start
         hook_end = clip_dur if hook.persist else min(hook.seconds, clip_dur)
-        # place the title just BELOW the facecam band so it never covers the webcam
-        if plan.reframe.mode == "facecam_top" and plan.facecam.present:
-            band = min(0.7, max(0.15, plan.facecam.band))
-            hook_y = int(plan.height * band) + 36
-        else:
-            hook_y = 140
         hook_x = plan.width // 2
+        if plan.reframe.mode == "facecam_top" and plan.facecam.present:
+            # centre the title ON the seam between the cam (top) and the gameplay (below)
+            seam = int(plan.height * min(0.7, max(0.15, plan.facecam.band)))
+            an, hook_y = 5, seam
+        elif plan.reframe.mode == "gameplay_blur":
+            an, hook_y = 8, 70           # full top, over the top blurred band (no cam)
+        else:
+            an, hook_y = 8, 140
         lines.append(
             f"Dialogue: 1,{_ts(0)},{_ts(hook_end)},Hook,,0,0,0,,"
-            f"{{\\an8\\pos({hook_x},{hook_y})}}{htext}"
+            f"{{\\an{an}\\pos({hook_x},{hook_y})}}{htext}"
         )
     for seg in segments:
         s = seg["start"] - plan.start

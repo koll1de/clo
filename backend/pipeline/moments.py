@@ -295,6 +295,7 @@ def vision_verify(job_id: str, vod_path: str, clips: list[Clip],
         c.sfx = v.sfx
         c.sfx_time = v.sfx_time
         c.music = v.music
+        c.layout = v.layout
         if "vision" not in c.signals:
             c.signals.append("vision")
         kept.append(c)

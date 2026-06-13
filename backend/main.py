@@ -232,7 +232,9 @@ app.mount("/clips", StaticFiles(directory=str(Paths.clips)), name="clips")
 
 @app.get("/")
 def index() -> FileResponse:
-    return FileResponse(str(FRONTEND / "index.html"))
+    # no-store so the browser always loads the latest UI (no more stale cached index.html)
+    return FileResponse(str(FRONTEND / "index.html"),
+                        headers={"Cache-Control": "no-store, must-revalidate"})
 
 
 app.mount("/", StaticFiles(directory=str(FRONTEND)), name="frontend")

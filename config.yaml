@@ -105,7 +105,7 @@ edit:
   sound_effects: true
   killfeed_highlights: true
   intro_hook: true
-  hook_font: Impact         # on-screen title font (auto-swaps to Arial Black for Russian text)
+  hook_font: Nata Sans SemiBold   # on-screen title font (bundled in assets/fonts, Cyrillic-OK)
   hook_color: "#FFD400"     # title colour — yellow
   hook_persist: true        # keep the title on screen for the whole clip (not just the intro)
   watermark:

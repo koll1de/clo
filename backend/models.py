@@ -54,6 +54,7 @@ class Clip(BaseModel):
     sfx: str = ""                            # name of a sound effect the AI chose to add (or "")
     sfx_time: float = 0.0                    # absolute source-seconds where the SFX should hit
     music: str = ""                          # AI-chosen background mood: '', 'calm', or 'hype'
+    layout: str = "facecam"                  # AI-chosen frame: 'facecam' or 'gameplay' (no cam)
     signals: list[str] = Field(default_factory=list)  # corroborating signals: audio, chat, killfeed
     status: ClipStatus = ClipStatus.pending
     file_path: Optional[str] = None

@@ -15,9 +15,11 @@ from pydantic import BaseModel, Field
 from .config import CONFIG, ROOT
 
 WIN_FONTS = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
+ASSET_FONTS = ROOT / "assets" / "fonts"   # bundled fonts (e.g. Nata Sans) that ship with the app
 
-# Friendly name -> (file on disk, font family name libass/ASS expects). All Cyrillic-capable.
+# Friendly name -> (file, family libass expects, asset=True if it lives in assets/fonts).
 FONTS: dict[str, dict] = {
+    "Nata Sans SemiBold": {"file": "NataSans-SemiBold.ttf", "family": "Nata Sans SemiBold", "asset": True},  # bundled, Cyrillic-capable
     "Bahnschrift": {"file": "bahnschrift.ttf", "family": "Bahnschrift"},  # modern condensed, Cyrillic
     "Segoe Black": {"file": "seguibl.ttf", "family": "Segoe UI Black"},
     "Arial Black": {"file": "ariblk.ttf", "family": "Arial Black"},
@@ -29,7 +31,8 @@ FONTS: dict[str, dict] = {
 
 def font_file(name: str) -> Path:
     entry = FONTS.get(name, FONTS["Segoe Black"])
-    return WIN_FONTS / entry["file"]
+    base = ASSET_FONTS if entry.get("asset") else WIN_FONTS
+    return base / entry["file"]
 
 
 def font_family(name: str) -> str:
@@ -62,7 +65,7 @@ class Facecam(BaseModel):
 
 
 class Reframe(BaseModel):
-    mode: Literal["fill_crop", "fit_blur", "facecam_top"] = "fill_crop"
+    mode: Literal["fill_crop", "fit_blur", "facecam_top", "gameplay_blur"] = "fill_crop"
     zoom: float = 1.0          # 1.0 = just covers the frame; >1 zooms further in
     x_center: float = 0.5      # horizontal crop center (0=left, 1=right)
     y_center: float = 0.5      # vertical crop center for the gameplay region
@@ -85,7 +88,7 @@ class IntroHook(BaseModel):
     seconds: float = 1.3        # only used when persist=False
     persist: bool = True        # keep the title on screen for the WHOLE clip
     color: str = "#FFD400"      # yellow
-    font: str = "Impact"        # heavy meme font (auto-swapped to a Cyrillic face for Russian)
+    font: str = "Nata Sans SemiBold"   # bundled, Cyrillic-capable (no swap needed)
 
 
 class QuestionCard(BaseModel):
@@ -165,6 +168,12 @@ def default_plan(source: str, clip, edit_cfg: dict) -> EditPlan:
         for k in ("x", "y", "w", "h", "present"):
             if k in det:
                 setattr(plan.facecam, k, det[k])
+
+    # The AI (or the min-gameplay quota) can pick the no-webcam 'gameplay' layout: full
+    # gameplay in the middle with a blurred backdrop above/below, no cam.
+    if getattr(clip, "layout", "facecam") == "gameplay":
+        plan.reframe.mode = "gameplay_blur"
+        plan.facecam.present = False
 
     # When he's talking to chat / giving tips, show the question card from his line.
     if clip.kind == "tips_to_chat":

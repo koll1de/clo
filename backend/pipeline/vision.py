@@ -130,18 +130,18 @@ _SYSTEM = (
     "- clipworthy: true only if genuinely worth posting (apply the rules above).\n"
     "- score: 0..1 confidence it performs as a Short.\n"
     "- kind: best-fitting label.\n"
-    "- title: a strong, scroll-stopping Renyan-style title. (a) Write it in the SAME LANGUAGE "
-    "the streamer speaks in the transcript — Russian dialogue -> Russian title, English -> "
-    "English. (b) Prefer a meme / relatable / reaction framing ('POV: ...', 'WHEN YOUR TEAM "
-    "...', 'X BUT Y', 'NAH CHAT WE ...') over a dry highlight label like 'INSANE 1v5 ACE'. "
-    "(c) Make it SPECIFIC to what actually happens or is said in THIS clip — not generic. "
-    "(d) Build curiosity; a trailing '...' cliffhanger is on-brand. (e) ALL CAPS is fine, at "
-    "most one emoji, NO hashtags or quotes (hashtags are added at publish time). Good English "
-    "examples: 'POV: YOUR 2K ELO TEAMMATE BLAMES EVERYONE BUT HIMSELF...', 'NAH CHAT WE GOT A "
-    "GENIUS ON OUR HANDS...', 'THANK YOU SHERLOCK...'. Use a real map/site name only if you "
-    "are sure; never invent intrigue (a 'secret room' etc.) that isn't there.\n"
-    "- hook: a punchy 2-4 word on-screen opener in the SAME LANGUAGE as the title (UPPERCASE "
-    "ok), or empty.\n"
+    "- title: write an ORIGINAL, scroll-stopping title for THIS specific clip. (a) Same "
+    "LANGUAGE the streamer speaks — Russian dialogue -> Russian title, English -> English. "
+    "(b) It must describe what ACTUALLY happens or is said in this exact clip (the specific "
+    "play, line or moment) — never a generic, reusable template. (c) Do NOT copy another "
+    "creator's catchphrases or recycled meme formats. Specifically AVOID stock openers like "
+    "'POV:', 'NAH CHAT', 'WHEN YOUR TEAM...', 'X BUT Y', 'THANK YOU SHERLOCK' and similar "
+    "borrowed phrasings — write it FRESH in the streamer's own voice, ideally drawing on his "
+    "actual words from the clip. (d) Short and punchy; a little curiosity is good but don't "
+    "lean on '...'. (e) No hashtags, no quotes, at most one emoji; use a real map/player name "
+    "only if you're sure, and never invent drama that isn't there.\n"
+    "- hook: a punchy 2-4 word on-screen opener in the SAME LANGUAGE as the title, in the "
+    "streamer's own words (UPPERCASE ok), or empty.\n"
     "- description: one sentence on what literally happens.\n"
     "- reason: one sentence on why it will or won't work.\n"
     "- clip_start, clip_end: absolute seconds (from the frame timestamps) bounding the "
@@ -163,6 +163,7 @@ class VisionVerdict:
     sfx: str = ""           # chosen sound-effect name (or "" for none)
     sfx_time: float = 0.0   # absolute seconds where the SFX should hit
     music: str = ""         # chosen background mood: '', 'calm', or 'hype'
+    layout: str = "facecam" # 'facecam' (cam on top) or 'gameplay' (no cam, blurred backdrop)
 
 
 def _sample_frames(vod_path: str, start: float, end: float, n: int, max_w: int = 768):
@@ -230,12 +231,20 @@ def analyze_clip(vod_path: str, start: float, end: float, *, frames: int = 8,
         "he calms, so choose by the clip's overall vibe."
         if music_on else ""
     )
+    layout_note = (
+        "\n\nLAYOUT: choose how to frame this clip. 'facecam' = keep the streamer's webcam on "
+        "top with the gameplay below — best when his face/voice/reaction matters (rage, banter, "
+        "talking to chat). 'gameplay' = NO webcam, the gameplay shown large with a blurred "
+        "backdrop above and below — best when the PLAY itself is the star (an ace, a clutch, a "
+        "multikill, an insane or lucky shot). Pick 'gameplay' only for genuinely "
+        "gameplay-driven highlights; otherwise 'facecam'."
+    )
     user = (
         f"These {len(imgs)} frames span {start:.0f}s to {end:.0f}s of the stream, in order "
         f"({labels}). Judge whether this is a clipworthy CS2 Short and pick the tight 15-45s "
-        f"cut using those timestamps.{talk}{audio_note}{sfx_note}{music_note}"
+        f"cut using those timestamps.{talk}{audio_note}{sfx_note}{music_note}{layout_note}"
     )
-    extra_props: dict = {}
+    extra_props: dict = {"layout": {"type": "string", "enum": ["facecam", "gameplay"]}}
     if sfx_names:
         extra_props["sfx"] = {"type": "string", "enum": sfx_names + ["none"]}
         extra_props["sfx_time"] = {"type": "number"}
@@ -271,6 +280,9 @@ def analyze_clip(vod_path: str, start: float, end: float, *, frames: int = 8,
     music = str(r.get("music", "") or "").strip().lower()
     if music not in ("calm", "hype"):
         music = ""
+    layout = str(r.get("layout", "") or "").strip().lower()
+    if layout not in ("facecam", "gameplay"):
+        layout = "facecam"
 
     return VisionVerdict(
         clipworthy=bool(r.get("clipworthy")),
@@ -285,4 +297,5 @@ def analyze_clip(vod_path: str, start: float, end: float, *, frames: int = 8,
         sfx=sfx,
         sfx_time=round(sfx_time, 2),
         music=music,
+        layout=layout,
     )

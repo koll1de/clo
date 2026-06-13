@@ -29,6 +29,8 @@ def _reframe_filter(plan: EditPlan) -> str:
     W, H = plan.width, plan.height
     if plan.reframe.mode == "facecam_top":
         return _facecam_top_filter(plan)
+    if plan.reframe.mode == "gameplay_blur":
+        return _gameplay_blur_filter(plan)
     if plan.reframe.mode == "fit_blur":
         return (
             f"split=2[bg][fg];"
@@ -67,6 +69,27 @@ def _facecam_top_filter(plan: EditPlan) -> str:
         f"crop={W}:{bot_h}:(in_w-{W})*{xc}:(in_h-{bot_h})*{yc},setsar=1"
     )
     return f"split=2[cam][game];[cam]{cam}[camf];[game]{game}[gamef];[camf][gamef]vstack=inputs=2"
+
+
+def _gameplay_blur_filter(plan: EditPlan) -> str:
+    """No-webcam layout: the full gameplay (sharp, uncropped) sits in a middle band, with
+    blurred crops of the same gameplay filling the bands above and below. The top blurred
+    band shows the BOTTOM of the gameplay; the bottom blurred band shows the TOP."""
+    W, H = plan.width, plan.height
+    mid_h = (round(W * 9 / 16) // 2) * 2          # full 16:9 gameplay scaled to width (~608)
+    top_h = ((H - mid_h) // 2 // 2) * 2           # even
+    bot_h = H - mid_h - top_h
+    # middle: fit the whole frame to width (no crop); pad only if the source isn't 16:9
+    mid = (f"scale={W}:{mid_h}:force_original_aspect_ratio=decrease,"
+           f"pad={W}:{mid_h}:(ow-iw)/2:(oh-ih)/2,setsar=1")
+    # top band: cover Wxh, keep the BOTTOM slice, blur
+    top = (f"scale={W}:{top_h}:force_original_aspect_ratio=increase,"
+           f"crop={W}:{top_h}:(in_w-{W})/2:(in_h-{top_h}),boxblur=28:2,setsar=1")
+    # bottom band: cover Wxh, keep the TOP slice, blur
+    bot = (f"scale={W}:{bot_h}:force_original_aspect_ratio=increase,"
+           f"crop={W}:{bot_h}:(in_w-{W})/2:0,boxblur=28:2,setsar=1")
+    return (f"split=3[gt][gm][gb];[gt]{top}[topb];[gm]{mid}[midb];[gb]{bot}[botb];"
+            f"[topb][midb][botb]vstack=inputs=3,setsar=1")
 
 
 def _zoom_filter(plan: EditPlan) -> str | None:
@@ -185,7 +208,7 @@ def render(plan: EditPlan, clip_id: str, transcript_path: str | None = None) -> 
             mix.append(f"[s{i}]")
 
         if len(mix) == 1:
-            amap = mix[0]                       # just the original voice — no mixing needed
+            amap = "0:a"                        # just the original voice — map the input stream
         else:
             # normalize=0 keeps the voice full under the bed; a limiter guards against clipping
             fc.append(f"{''.join(mix)}amix=inputs={len(mix)}:normalize=0:"
