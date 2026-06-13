@@ -174,10 +174,11 @@ def apply_audio_signal(
             continue
         if overlaps_clip(r) is not None:
             continue
-        # build a clip window around the peak within the configured bounds
-        half = clip_cfg["min_seconds"] / 2
-        start = max(0.0, r.peak - half - 1.0)   # a beat of lead-in before the peak
-        end = start + clip_cfg["min_seconds"]
+        # Window biased just before the peak (the action precedes the loud reaction),
+        # kept tight enough that sampled frames land on the action. Vision picks the
+        # final 15-45s cut inside it.
+        start = max(0.0, r.peak - 22.0)
+        end = r.peak + 8.0                          # ~30s window, peak ~3/4 through
         title = _nearest_text(segments, r.peak)[:80]
         conf = min(1.0, 0.5 + (r.level - min_level) * 0.1)
         clip = Clip(
@@ -254,19 +255,24 @@ def vision_verify(job_id: str, vod_path: str, clips: list[Clip]) -> list[Clip]:
     if not vcfg.get("enabled", True) or not clips:
         return clips
     min_score = float(vcfg.get("min_score", 0.6))
-    frames = int(vcfg.get("frames_per_clip", 6))
+    frames = int(vcfg.get("frames_per_clip", 8))
     max_verify = int(vcfg.get("max_verify", 24))
+    min_len = float(CONFIG["clips"]["min_seconds"])
+    max_len = float(CONFIG["clips"]["max_seconds"])
 
     # only spend vision compute on the most promising candidates
     cands = sorted(clips, key=lambda c: c.score, reverse=True)[:max_verify]
     kept: list[Clip] = []
     for c in cands:
-        v = vision.analyze_clip(vod_path, c.start, c.end, frames=frames)
+        v = vision.analyze_clip(vod_path, c.start, c.end, frames=frames,
+                                min_len=min_len, max_len=max_len)
         if v is None:
             continue  # couldn't see it -> don't risk a bad clip
         if not v.clipworthy or v.score < min_score:
             print(f"[vision] dropped {c.start:.0f}-{c.end:.0f}s ({v.score:.2f} {v.kind}): {v.reason}")
             continue
+        # adopt the AI-chosen tight cut (adaptive 15-45s)
+        c.start, c.end = v.clip_start, v.clip_end
         c.kind = v.kind
         c.title = v.title or c.title
         c.hook = v.hook

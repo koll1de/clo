@@ -41,7 +41,7 @@ def has_model(model: str | None = None) -> bool:
 
 def chat_vision(system: str, user: str, images_b64: list[str], schema: dict,
                 *, model: str | None = None, temperature: float = 0.2,
-                num_ctx: int = 8192) -> dict:
+                num_ctx: int = 16384) -> dict:
     """Send images + a prompt to a vision model (e.g. qwen2.5vl) and return JSON
     constrained to `schema`. Images are base64-encoded JPEG/PNG (no data: prefix)."""
     payload = {

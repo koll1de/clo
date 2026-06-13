@@ -43,8 +43,8 @@ signals:
   vision:
     enabled: true
     model: qwen2.5vl:7b       # local Ollama vision model (pulled via setup)
-    frames_per_clip: 6        # frames sampled across each candidate for the model to see
-    min_score: 0.6            # keep only candidates the model rates at least this clipworthy
+    frames_per_clip: 8        # frames sampled across each candidate (also used to pick the cut)
+    min_score: 0.55           # gate; raise toward 0.7 for fewer/stronger clips, lower for more
     max_verify: 24            # cap how many candidates we run the vision model on per VOD
   audio:
     enabled: true             # find loudness/excitement spikes (screams, hype, hard laughing)
