@@ -46,12 +46,25 @@ def transcribe(job: Job) -> Job:
 
     cfg = CONFIG["transcribe"]
     model = _get_model()
-    segments, info = model.transcribe(
-        str(work_audio),
-        language=cfg["language"],
-        word_timestamps=True,
-        vad_filter=True,
-    )
+    # Batched inference is much faster on long VODs (multi-hour streams). It needs
+    # spare VRAM for the larger batch; whisper still unloads before the LLM stage.
+    if cfg.get("batched"):
+        from faster_whisper import BatchedInferencePipeline
+        pipeline = BatchedInferencePipeline(model=model)
+        segments, info = pipeline.transcribe(
+            str(work_audio),
+            language=cfg["language"],
+            word_timestamps=True,
+            vad_filter=True,
+            batch_size=int(cfg.get("batch_size", 16)),
+        )
+    else:
+        segments, info = model.transcribe(
+            str(work_audio),
+            language=cfg["language"],
+            word_timestamps=True,
+            vad_filter=True,
+        )
 
     out = {
         "language": info.language,

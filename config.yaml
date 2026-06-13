@@ -11,6 +11,8 @@ transcribe:
   language: ru              # stream is mostly Russian
   device: cuda
   compute_type: float16     # fast + accurate on a 3090
+  batched: true             # BatchedInferencePipeline — much faster on multi-hour VODs
+  batch_size: 16            # lower this if you hit VRAM limits during transcription
 
 clips:
   min_seconds: 15
