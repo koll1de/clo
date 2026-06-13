@@ -125,6 +125,76 @@ def _dedupe(clips: list[Clip]) -> list[Clip]:
     return sorted(kept, key=lambda x: x.start)
 
 
+def _nearest_text(segments: list[dict], t: float) -> str:
+    """The transcript line closest to time t — used to title an audio-only candidate."""
+    best, best_d = "", 1e9
+    for s in segments:
+        mid = (s["start"] + s["end"]) / 2
+        d = abs(mid - t)
+        if d < best_d and (s.get("text") or "").strip():
+            best, best_d = s["text"].strip(), d
+    return best
+
+
+def apply_audio_signal(
+    job_id: str, clips: list[Clip], reactions: list, transcript_path: str
+) -> list[Clip]:
+    """Corroborate transcript clips with loudness spikes and surface strong
+    reactions the transcript brain missed (the pure-gameplay-hype gap)."""
+    scfg = CONFIG.get("signals", {}).get("audio", {})
+    if not scfg.get("enabled", True) or not reactions:
+        return clips
+    boost = float(scfg.get("corroborate_boost", 1.2))
+    min_level = float(scfg.get("min_reaction_level", 3.0))
+    max_new = int(scfg.get("max_new_candidates", 4))
+    weights = CONFIG["priority"]
+    clip_cfg = CONFIG["clips"]
+    data = _load_transcript(transcript_path)
+    segments = data.get("segments", [])
+
+    def overlaps_clip(r) -> Clip | None:
+        for c in clips:
+            if min(c.end, r.end) - max(c.start, r.start) > 0:
+                return c
+        return None
+
+    # 1) corroborate existing clips (reactions are sorted strongest-first, so the
+    #    first overlap is the loudest beat — that's the one we punch in on)
+    for r in reactions:
+        c = overlaps_clip(r)
+        if c is not None and "audio" not in c.signals:
+            c.signals.append("audio")
+            c.score = round(min(c.score * boost, 1.5), 4)
+            c.audio_peak = round(min(max(r.peak, c.start), c.end), 2)
+
+    # 2) new candidates from strong, uncovered reactions
+    new_count = 0
+    for r in reactions:
+        if new_count >= max_new or r.level < min_level:
+            continue
+        if overlaps_clip(r) is not None:
+            continue
+        # build a clip window around the peak within the configured bounds
+        half = clip_cfg["min_seconds"] / 2
+        start = max(0.0, r.peak - half - 1.0)   # a beat of lead-in before the peak
+        end = start + clip_cfg["min_seconds"]
+        title = _nearest_text(segments, r.peak)[:80]
+        conf = min(1.0, 0.5 + (r.level - min_level) * 0.1)
+        clip = Clip(
+            id=uuid.uuid4().hex[:12], job_id=job_id,
+            start=round(start, 2), end=round(end, 2),
+            kind="big_reaction",
+            score=round(conf * float(weights.get("big_reaction", 0.8)), 4),
+            title=title, reason=f"Loud reaction ({r.level}x baseline) detected in audio.",
+            audio_peak=round(r.peak, 2), signals=["audio"],
+            status=ClipStatus.pending,
+        )
+        clips.append(clip)
+        new_count += 1
+
+    return _dedupe(clips)
+
+
 def find_transcript_moments(job_id: str, transcript_path: str) -> list[Clip]:
     cfg = CONFIG["llm"]
     weights = CONFIG["priority"]

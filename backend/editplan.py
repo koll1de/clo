@@ -96,6 +96,14 @@ def default_plan(source: str, clip, edit_cfg: dict) -> EditPlan:
     plan.captions.font = edit_cfg.get("subtitle_font", "Segoe Black")
     plan.intro_hook.enabled = bool(edit_cfg.get("intro_hook", True))
     plan.intro_hook.text = clip.title or ""
+
+    # If audio found the loudest beat in this clip, punch in on it.
+    peak = getattr(clip, "audio_peak", None)
+    if edit_cfg.get("zoom_punch_ins", True) and peak is not None:
+        rel = peak - clip.start
+        if 0.2 < rel < (clip.end - clip.start) - 0.2:
+            plan.effects.append(Effect(type="zoom", t0=round(rel - 0.4, 2),
+                                       t1=round(rel + 1.1, 2), params={"amount": 0.2}))
     # When he's talking to chat / giving tips, show the question card from his line.
     if clip.kind == "tips_to_chat":
         text = (getattr(clip, "quote", "") or clip.title or "").strip()

@@ -15,6 +15,7 @@ from . import ingest as ingest_stage
 from . import transcribe as transcribe_stage
 from . import moments as moments_stage
 from . import render as render_stage
+from . import audio as audio_stage
 
 
 def _auto_publish(clips: list) -> None:
@@ -57,6 +58,14 @@ def run_job(job_id: str) -> None:
         job.status = JobStatus.finding_moments
         store.save_job(job)
         clips = moments_stage.find_transcript_moments(job_id, job.transcript_path)
+        # audio signal: corroborate moments + surface loud reactions the LLM missed
+        if CONFIG.get("signals", {}).get("audio", {}).get("enabled", True):
+            try:
+                reactions = audio_stage.find_reactions(job.vod_path, job_id)
+                clips = moments_stage.apply_audio_signal(
+                    job_id, clips, reactions, job.transcript_path)
+            except Exception as e:  # never let a signal kill the run
+                print(f"[audio] signal failed: {e}")
         for c in clips:
             store.save_clip(c)
 

@@ -47,6 +47,8 @@ class Clip(BaseModel):
     quote: str = ""          # the key spoken line (becomes the question-card text)
     question_username: str = ""              # chat user he's answering, if named
     question_highlights: list[str] = Field(default_factory=list)  # words to gold-highlight
+    audio_peak: Optional[float] = None       # source-seconds of the loudest beat in the clip
+    signals: list[str] = Field(default_factory=list)  # corroborating signals: audio, chat, killfeed
     status: ClipStatus = ClipStatus.pending
     file_path: Optional[str] = None
     edit_plan: Optional[dict] = None

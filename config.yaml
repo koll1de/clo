@@ -34,6 +34,22 @@ llm:
   overlap_seconds: 45       # overlap between windows so moments on a boundary aren't lost
   think: false              # qwen3 reasoning mode off -> faster, clean JSON for extraction
 
+# Extra moment signals layered on top of the transcript brain.
+signals:
+  audio:
+    enabled: true             # find loudness/excitement spikes (screams, hype, hard laughing)
+    corroborate_boost: 1.2    # multiply a clip's score when a loud reaction overlaps it
+    min_reaction_level: 3.0   # a spike this many× louder than baseline can become its own clip
+    max_new_candidates: 4     # cap audio-only candidates per VOD (quality over quantity)
+  chat:
+    enabled: true             # Twitch chat message-velocity + emote spikes (VOD URLs only)
+    corroborate_boost: 1.2
+    min_burst_level: 3.0      # messages/sec this many× the median can become its own clip
+    max_new_candidates: 4
+  killfeed:
+    enabled: false            # CS2 kill-feed OCR (aces/clutches/deagle strings) — needs tuning
+                              # on your own full-res HUD; see backend/pipeline/killfeed.py
+
 edit:
   subtitles: true           # master toggle; can override per-clip in the UI
   subtitle_font: Segoe Black # must be a Cyrillic-capable font (see backend/editplan.py FONTS)
