@@ -112,22 +112,44 @@
       const jobs = await (await fetch('/api/jobs')).json();
       const el = $('jobs');
       if (!jobs.length) { el.innerHTML = '<div class="muted">No jobs yet.</div>'; return; }
-      el.innerHTML = jobs.map(j => `
+      const RUNNING = ['queued','ingesting','transcribing','finding_moments','rendering'];
+      el.innerHTML = jobs.map(j => {
+        const running = RUNNING.includes(j.status);
+        const name = (j.source||'').split(/[\\/]/).pop();
+        return `
         <div class="job ${selectedJob===j.id?'sel':''}" onclick="selectJob('${j.id}')">
-          <div>
-            <div>${(j.source||'').split(/[\\/]/).pop()}</div>
+          <div style="min-width:0;flex:1">
+            <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</div>
             <div class="muted">${j.source_type} · ${j.id}</div>
           </div>
           <span class="pill ${j.status}">${j.status.replace(/_/g,' ')}</span>
-        </div>`).join('');
+          ${running ? `<button class="ghost" title="Stop the clipmaking" onclick="event.stopPropagation();killJob('${j.id}')">Stop</button>` : ''}
+          <button class="red" title="Delete job + VOD + clips" onclick="event.stopPropagation();deleteJob('${j.id}')">✕</button>
+        </div>`;
+      }).join('');
     }
+
+    window.killJob = async (id) => {
+      await fetch(`/api/jobs/${id}/cancel`, { method:'POST' });
+      loadJobs();
+    };
+
+    window.deleteJob = async (id) => {
+      if (!confirm('Delete this job and its clips (and the VOD, if no other job uses it)? This cannot be undone.')) return;
+      await fetch(`/api/jobs/${id}`, { method:'DELETE' });
+      if (selectedJob === id) { selectedJob = null; $('clips').innerHTML=''; $('reviewCard').style.display='none'; }
+      loadJobs();
+    };
 
     window.selectJob = (id) => { selectedJob = id; loadJobs(); loadClips(); };
 
     function videoHtml(c) {
       const v = bust[c.id] ? ('?v=' + bust[c.id]) : '';
+      // preload="none": with many clips on the page, preloading them all exhausts the
+      // browser's ~6 connections-per-host limit and starves the one you're actually playing
+      // (it stalls after a few seconds and reloads). Load each video only when you hit play.
       return c.file_path
-        ? `<video src="/clips/${c.id}.mp4${v}" controls preload="metadata"></video>`
+        ? `<video src="/clips/${c.id}.mp4${v}" controls preload="none" playsinline></video>`
         : `<div style="aspect-ratio:9/16;display:flex;align-items:center;justify-content:center;" class="muted">rendering…</div>`;
     }
 
@@ -178,8 +200,10 @@
         Object.entries(counts).map(([k,v])=>`· ${v} ${k}`).join(' ');
 
       const grid = $('clips');
-      if (!clips.length) { grid.innerHTML = '<div class="muted">No clips yet — still finding moments…</div>'; return; }
-      if (grid.querySelector('.muted')) grid.innerHTML = '';
+      if (!clips.length) { grid.innerHTML = '<div class="muted" id="clips-empty">No clips yet — still finding moments…</div>'; return; }
+      // remove ONLY the empty placeholder — never wipe the whole grid (a still-"rendering…"
+      // card also has a .muted div, and nuking the grid would restart every playing video)
+      const ph = document.getElementById('clips-empty'); if (ph) ph.remove();
 
       // Incrementally update each card so a playing <video> (and a textarea being
       // typed in) is never recreated by the 3s poll. Only changed cards are touched.

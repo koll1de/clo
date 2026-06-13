@@ -11,6 +11,30 @@ from .models import Job, Clip
 
 _lock = threading.Lock()
 
+# Cooperative cancellation: a job_id in here means "stop ASAP". The pipeline checks this
+# at stage boundaries (and inside the vision loop). Lives here so run.py and moments.py can
+# both read it without an import cycle.
+_CANCEL: set[str] = set()
+
+
+def request_cancel(job_id: str) -> None:
+    _CANCEL.add(job_id)
+
+
+def clear_cancel(job_id: str) -> None:
+    _CANCEL.discard(job_id)
+
+
+def is_cancelled(job_id: str) -> bool:
+    return job_id in _CANCEL
+
+
+def delete_job(job_id: str) -> None:
+    """Remove a job and all its clip rows from the DB (files are removed by the caller)."""
+    with _lock, _conn() as c:
+        c.execute("DELETE FROM clips WHERE job_id=?", (job_id,))
+        c.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+
 
 def _conn() -> sqlite3.Connection:
     c = sqlite3.connect(Paths.db, check_same_thread=False)

@@ -14,6 +14,7 @@ from pathlib import Path
 
 from ..config import CONFIG
 from .. import llm
+from .. import store
 from ..models import Clip, ClipStatus
 
 # Moment kinds the transcript can reveal (kill-based kinds come from the kill-feed).
@@ -273,6 +274,8 @@ def vision_verify(job_id: str, vod_path: str, clips: list[Clip],
     cands = sorted(clips, key=lambda c: c.score, reverse=True)[:max_verify]
     kept: list[Clip] = []
     for c in cands:
+        if store.is_cancelled(job_id):     # user killed the job — stop the (slow) vision pass
+            break
         dialogue = _window_text(segments, c.start, c.end) if segments else ""
         v = vision.analyze_clip(vod_path, c.start, c.end, frames=frames,
                                 min_len=min_len, max_len=max_len, transcript=dialogue,

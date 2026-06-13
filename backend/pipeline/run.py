@@ -21,6 +21,16 @@ from . import killfeed as killfeed_stage
 from . import facecam as facecam_stage
 
 
+class JobCancelled(Exception):
+    """Raised inside run_job when the user kills the job mid-run."""
+
+
+def _ck(job_id: str) -> None:
+    """Cancellation checkpoint — raise if the user asked to stop this job."""
+    if store.is_cancelled(job_id):
+        raise JobCancelled()
+
+
 def _auto_publish(clips: list) -> None:
     """Approve every clip and publish to enabled platforms (hands-off mode)."""
     from ..publish import publish_clip, any_success
@@ -49,12 +59,14 @@ def run_job(job_id: str) -> None:
         store.save_job(job)
         job = ingest_stage.ingest(job)
         store.save_job(job)
+        _ck(job_id)
 
         # 2) transcribe (GPU)
         job.status = JobStatus.transcribing
         store.save_job(job)
         job = transcribe_stage.transcribe(job)
         store.save_job(job)
+        _ck(job_id)
 
         # 3) find moments (LLM). Free whisper from VRAM first so it doesn't fight qwen.
         transcribe_stage.unload_model()
@@ -94,6 +106,7 @@ def run_job(job_id: str) -> None:
                 print(f"[vision] verify failed: {e}")
         for c in clips:
             store.save_clip(c)
+        _ck(job_id)
 
         # detect the streamer's webcam once so every clip uses the same cam box
         edit_cfg = dict(CONFIG["edit"])
@@ -109,6 +122,7 @@ def run_job(job_id: str) -> None:
         job.status = JobStatus.rendering
         store.save_job(job)
         for c in clips:
+            _ck(job_id)
             try:
                 plan = default_plan(job.vod_path, c, edit_cfg)
                 out = render_stage.render(plan, c.id, transcript_path=job.transcript_path)
@@ -125,8 +139,16 @@ def run_job(job_id: str) -> None:
         # 6) done — clips are in the review queue
         job.status = JobStatus.ready
         store.save_job(job)
+    except JobCancelled:
+        job = store.get_job(job_id) or job
+        job.status = JobStatus.cancelled
+        job.error = None
+        store.save_job(job)
+        print(f"[run] job {job_id} cancelled")
     except Exception as e:
         job = store.get_job(job_id) or job
         job.status = JobStatus.error
         job.error = f"{e}\n{traceback.format_exc()[-1500:]}"
         store.save_job(job)
+    finally:
+        store.clear_cancel(job_id)

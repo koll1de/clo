@@ -14,6 +14,7 @@ class JobStatus(str, Enum):
     rendering = "rendering"
     ready = "ready"          # clips are in the review queue
     error = "error"
+    cancelled = "cancelled"  # the user killed the job mid-run
 
 
 class ClipStatus(str, Enum):

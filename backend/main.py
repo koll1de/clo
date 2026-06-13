@@ -64,6 +64,65 @@ def get_job_clips(job_id: str) -> list:
     return store.list_clips(job_id)
 
 
+def _safe_unlink(p) -> None:
+    if not p:
+        return
+    try:
+        Path(p).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+def cancel_job(job_id: str):
+    """Kill the clipmaking for a running/queued job (cooperative — stops at the next stage)."""
+    job = store.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "job not found")
+    store.request_cancel(job_id)
+    if job.status in (JobStatus.ready, JobStatus.error, JobStatus.cancelled):
+        store.clear_cancel(job_id)  # nothing actually running to stop
+    return {"ok": True}
+
+
+@app.delete("/api/jobs/{job_id}")
+def delete_job(job_id: str):
+    """Delete a job fully — its clips, work files, and the VOD — even when finished. Also
+    cancels it first if it's mid-run. The VOD is removed only if no other job still uses it,
+    and only when it lives inside the app's data dir (never an outside file the user picked)."""
+    job = store.get_job(job_id)
+    if not job:
+        raise HTTPException(404, "job not found")
+    store.request_cancel(job_id)  # stop any in-flight processing before we remove its files
+
+    for c in store.list_clips(job_id):
+        _safe_unlink(c.file_path)
+        _safe_unlink(Paths.work / f"{c.id}.ass")
+    _safe_unlink(job.transcript_path)
+    _safe_unlink(job.chat_path)
+    _safe_unlink(Paths.work / f"{job.id}.wav")
+    _safe_unlink(Paths.work / f"{job.id}.chat.json")
+
+    # the VOD: only delete it if it's inside data/ AND no other job references it
+    others = [o for o in store.list_jobs() if o.id != job_id]
+    for vod in {job.vod_path, job.source}:
+        if not vod:
+            continue
+        try:
+            vp = Path(vod).resolve()
+        except Exception:
+            continue
+        if Paths.data.resolve() not in vp.parents or not vp.exists():
+            continue
+        shared = any(o.vod_path == vod or o.source == vod for o in others)
+        if not shared:
+            _safe_unlink(vp)
+
+    store.delete_job(job_id)
+    store.clear_cancel(job_id)
+    return {"ok": True}
+
+
 @app.get("/api/clips/{clip_id}")
 def get_clip(clip_id: str):
     clip = store.get_clip(clip_id)
