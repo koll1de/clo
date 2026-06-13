@@ -21,3 +21,4 @@ config.local.yaml
 # OS
 Thumbs.db
 .DS_Store
+_verify_new.py
