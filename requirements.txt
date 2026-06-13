@@ -27,3 +27,6 @@ google-auth-httplib2==0.2.0
 # --- Misc ---
 requests==2.32.3
 numpy==2.2.1
+
+# --- Optional: Claude API (only needed when provider: anthropic is set in config.yaml) ---
+anthropic>=0.69.0

@@ -302,15 +302,15 @@ def apply_killfeed_signal(
             if min(c.end, ks.end) - max(c.start, ks.start) > 0 and "killfeed" not in c.signals:
                 c.signals.append("killfeed")
                 c.score = round(min(c.score * 1.2, 1.5), 4)
-        # the kill sequence itself is a candidate
-        start = max(0.0, ks.start - 2.0)
-        end = max(start + clip_cfg["min_seconds"], ks.end + 2.0)
+        # peak-centred window so the vision pass can pick the tight 15-45s cut
+        start = max(0.0, ks.peak - 22.0)
+        end = ks.peak + 8.0
         clips.append(Clip(
             id=uuid.uuid4().hex[:12], job_id=job_id,
             start=round(start, 2), end=round(end, 2), kind=ks.kind,
-            score=round(0.85 * float(weights.get(ks.kind, 0.55)), 4),
-            title=_nearest_text(segments, ks.peak)[:80] or ks.kind.replace("_", " ").title(),
-            reason=f"Kill-feed detected {ks.kills} kills in a burst ({ks.kind}).",
+            score=round(0.85 * float(weights.get(ks.kind, 0.6)), 4),
+            title=_nearest_text(segments, ks.peak)[:80] or "Kill feed action",
+            reason=f"Kill-feed activity spike ({ks.kills}x baseline).",
             audio_peak=round(ks.peak, 2), signals=["killfeed"],
             status=ClipStatus.pending,
         ))

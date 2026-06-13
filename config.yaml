@@ -29,12 +29,19 @@ priority:
   multikill_deagle: 0.55    # 3-4 headshot deagle strings etc.
 
 llm:
+  provider: ollama          # ollama (local, free) | anthropic (Claude API, paid, best picks)
   model: qwen3:30b          # local Ollama model (MoE, 256K ctx) that reads the transcript
   host: http://localhost:11434
   num_ctx: 16384            # context tokens per request (KV cache must fit in spare VRAM)
   chunk_minutes: 10         # analyze the transcript in windows of this many minutes
   overlap_seconds: 45       # overlap between windows so moments on a boundary aren't lost
   think: false              # qwen3 reasoning mode off -> faster, clean JSON for extraction
+  anthropic:                # used only when provider: anthropic
+    # Pick any current Claude model: claude-opus-4-8 (top judgment) |
+    # claude-sonnet-4-6 (cheaper) | claude-haiku-4-5 (cheapest). Transcript work is
+    # cheap on tokens either way, so opus is a fine default here.
+    model: claude-opus-4-8
+    # API key: set the ANTHROPIC_API_KEY env var, or save it in secrets/anthropic_api_key.txt
 
 # Extra moment signals layered on top of the transcript brain.
 signals:
@@ -42,7 +49,11 @@ signals:
   # genuinely entertaining ones (this is what stops context-free "clips of nothing").
   vision:
     enabled: true
-    model: qwen2.5vl:7b       # local Ollama vision model (pulled via setup)
+    provider: anthropic       # ollama (local, free) | anthropic (Claude API, paid, best judgment)
+    model: qwen2.5vl:7b       # local vision model (32b vision won't fit the 3090's 24GB)
+    # used only when provider: anthropic. This call dominates API cost (frames x candidates),
+    # so if you want to economise, drop frames_per_clip or use claude-sonnet-4-6 here.
+    anthropic_model: claude-opus-4-8
     frames_per_clip: 8        # frames sampled across each candidate (also used to pick the cut)
     min_score: 0.55           # gate; raise toward 0.7 for fewer/stronger clips, lower for more
     max_verify: 24            # cap how many candidates we run the vision model on per VOD
@@ -57,14 +68,12 @@ signals:
     min_burst_level: 3.0      # messages/sec this many× the median can become its own clip
     max_new_candidates: 4
   killfeed:
-    enabled: false            # CS2 kill-feed detection — TUNE on your own full-res HUD first
+    enabled: true             # CS2 kill-feed activity detection (candidate source; vision judges)
     sample_fps: 4.0           # frames/sec to scan (higher = more accurate, slower)
-    roi: {x: 0.55, y: 0.02, w: 0.44, h: 0.28}  # kill-feed region as fractions of the frame
-    row_min_frac: 0.06        # min fraction of bright pixels for a row to count
-    multikill_rows: 3         # rows appearing within window_seconds = a multi-kill
-    ace_rows: 5               # this many = an ace
-    window_seconds: 6.0       # how fast the kills must land to count as one sequence
-    templates_dir: data/killfeed_templates  # drop weapon-icon PNGs here to confirm kills
+    roi: {x: 0.60, y: 0.03, w: 0.40, h: 0.22}  # kill-feed region as fractions of the frame
+    spike_factor: 1.6         # kill-feed activity this many× the baseline = a candidate window
+    max_candidates: 14        # cap kill-feed candidate windows (the vision gate filters them)
+    window_seconds: 4.0       # min gap between separate activity spikes
 
 edit:
   subtitles: false          # OFF — Renyan-style clips have no running captions
