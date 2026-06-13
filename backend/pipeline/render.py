@@ -99,7 +99,10 @@ def render(plan: EditPlan, clip_id: str, transcript_path: str | None = None) -> 
     sfx = [e for e in plan.effects
            if e.type == "sfx" and e.params.get("file") and Path(e.params["file"]).exists()]
 
-    cmd = [ffmpeg_bin(), "-y", "-ss", f"{plan.start:.3f}", "-t", f"{dur:.3f}", "-i", plan.source]
+    # ffmpeg runs with cwd=work (so the ass=<basename> path resolves), so the source
+    # must be absolute — a relative VOD path would otherwise be looked for under work/.
+    source = str(Path(plan.source).resolve())
+    cmd = [ffmpeg_bin(), "-y", "-ss", f"{plan.start:.3f}", "-t", f"{dur:.3f}", "-i", source]
     for e in sfx:
         cmd += ["-i", str(e.params["file"])]
 
