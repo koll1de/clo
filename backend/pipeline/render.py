@@ -44,25 +44,81 @@ def _reframe_filter(plan: EditPlan) -> str:
     )
 
 
+def _zoom_filter(plan: EditPlan) -> str | None:
+    """Animated zoom punch-ins. Builds one z(t) expression from every `zoom` effect
+    (each a smooth pulse that eases in/out over its window), then crops the WxH frame
+    by 1/z centered and scales back up — a single pass that stacks multiple punch-ins.
+    Returns None when there are no zoom effects."""
+    W, H = plan.width, plan.height
+    zooms = [e for e in plan.effects if e.type == "zoom"]
+    if not zooms:
+        return None
+    terms = []
+    for e in zooms:
+        t0, t1 = e.t0, max(e.t0 + 0.3, e.t1)
+        amp = float(e.params.get("amount", 0.18))   # 0.18 ≈ a punchy but not jarring push-in
+        r = min(0.25, (t1 - t0) / 2)                 # ease seconds
+        # amp * rampUp(t) * rampDown(t). Commas are fine: the value is single-quoted below.
+        terms.append(
+            f"{amp}*min(1,max(0,(t-{t0:.3f})/{r:.3f}))"
+            f"*min(1,max(0,({t1:.3f}-t)/{r:.3f}))"
+        )
+    z = "1+" + "+".join(terms)
+    # ffmpeg can't animate crop's output SIZE, so scale the whole frame by z(t) per
+    # frame (eval=frame) and crop the constant WxH centre back out = zoom toward centre.
+    return (
+        f"scale=w='{W}*({z})':h='{H}*({z})':eval=frame,"
+        f"crop={W}:{H}"
+    )
+
+
 def render(plan: EditPlan, clip_id: str, transcript_path: str | None = None) -> Path:
     out_path = Paths.clips / f"{clip_id}.mp4"
     ass_path = Paths.work / f"{clip_id}.ass"
 
-    # Build the subtitle/hook overlay (relative filename so the ffmpeg cwd handles paths)
+    # Video filter chain: reframe -> zoom punch-ins -> caption/card overlay.
     vf_parts = [_reframe_filter(plan)]
-    if (plan.captions.enabled or (plan.intro_hook.enabled and plan.intro_hook.text)) and transcript_path:
+    zoom = _zoom_filter(plan)
+    if zoom:
+        vf_parts.append(zoom)
+    # Build the ASS (captions, intro hook, and/or question card) if anything needs it.
+    needs_ass = (
+        plan.captions.enabled
+        or (plan.intro_hook.enabled and plan.intro_hook.text)
+        or (plan.question_card.enabled and plan.question_card.text.strip())
+    )
+    if needs_ass and transcript_path:
         captions_mod.build_ass(plan, transcript_path, ass_path)
         _stage_font(plan.captions.font)
         vf_parts.append(f"ass={ass_path.name}:fontsdir=.")
     vf = ",".join(vf_parts)
 
     dur = max(0.1, plan.end - plan.start)
-    cmd = [
-        ffmpeg_bin(), "-y",
-        "-ss", f"{plan.start:.3f}", "-t", f"{dur:.3f}",
-        "-i", plan.source,
-        "-vf", vf,
-        "-r", str(plan.fps),
+
+    # Sound-effect overlays: mix each onto the original audio at its t0 (only real files).
+    sfx = [e for e in plan.effects
+           if e.type == "sfx" and e.params.get("file") and Path(e.params["file"]).exists()]
+
+    cmd = [ffmpeg_bin(), "-y", "-ss", f"{plan.start:.3f}", "-t", f"{dur:.3f}", "-i", plan.source]
+    for e in sfx:
+        cmd += ["-i", str(e.params["file"])]
+
+    if sfx:
+        # ffmpeg forbids -vf alongside -filter_complex, so the video chain lives in the
+        # graph too. Each sfx input is delayed to its t0 (ms) and amixed with clip audio.
+        fc = [f"[0:v]{vf}[vout]"]
+        labels = ["[0:a]"]
+        for i, e in enumerate(sfx, start=1):
+            delay = int(max(0.0, e.t0) * 1000)
+            vol = float(e.params.get("volume", 1.0))
+            fc.append(f"[{i}:a]adelay={delay}|{delay},volume={vol}[s{i}]")
+            labels.append(f"[s{i}]")
+        fc.append(f"{''.join(labels)}amix=inputs={len(labels)}:duration=first:dropout_transition=0[aout]")
+        cmd += ["-filter_complex", ";".join(fc), "-map", "[vout]", "-map", "[aout]", "-r", str(plan.fps)]
+    else:
+        cmd += ["-vf", vf, "-r", str(plan.fps)]
+
+    cmd += [
         "-c:v", "libx264", "-preset", "medium", "-crf", "20",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "160k",

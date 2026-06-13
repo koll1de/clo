@@ -36,6 +36,65 @@ def _load_segments(transcript_path: str) -> list[dict]:
         return json.load(f).get("segments", [])
 
 
+def _wrap(text: str, width: int) -> str:
+    """Word-wrap into ASS \\N-separated lines of at most `width` characters.
+    Manual wrapping makes the boxed question card lay out deterministically."""
+    words = text.split()
+    lines: list[str] = []
+    cur = ""
+    for w in words:
+        if cur and len(cur) + 1 + len(w) > width:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = f"{cur} {w}" if cur else w
+    if cur:
+        lines.append(cur)
+    return "\\N".join(lines)
+
+
+def _highlight(text: str, highlights: list[str], white: str, gold: str) -> str:
+    """Uppercase the text and colour any `highlights` words gold (rest white)."""
+    hi = {h.strip().lower() for h in highlights if h.strip()}
+    out: list[str] = []
+    for word in text.split():
+        # compare on letters/digits only so trailing punctuation still matches
+        bare = "".join(ch for ch in word if ch.isalnum()).lower()
+        if bare and bare in hi:
+            out.append(f"{{\\1c{gold}}}{word.upper()}{{\\1c{white}}}")
+        else:
+            out.append(word.upper())
+    return " ".join(out)
+
+
+def _question_card_events(plan: EditPlan) -> list[str]:
+    """Render the red username tag + dark question container (with gold keyword
+    highlights) as positioned, auto-sized libass boxes. Clip-relative timing."""
+    qc = plan.question_card
+    if not (qc.enabled and qc.text.strip()):
+        return []
+
+    white = "&H00FFFFFF"
+    gold = _ass_color("#F5B400")
+    s, e = _ts(max(0.0, qc.t0)), _ts(max(qc.t0 + 0.5, qc.t1))
+
+    events: list[str] = []
+    # Red username tag (top-left), shown only if we know who said it.
+    if qc.username.strip():
+        tag = qc.username.strip().upper().replace("{", "(").replace("}", ")")
+        events.append(f"Dialogue: 5,{s},{e},QTag,,0,0,0,,{{\\an7\\pos(70,250)}}{tag}")
+
+    # Dark question container, wrapped and highlighted. A lighter box one layer
+    # below (slightly larger border) reads as the thin outline from the reference.
+    body = _wrap(qc.text.strip().replace("{", "(").replace("}", ")"), 20)
+    marked = _highlight(body, qc.highlights, white, gold)
+    y = 340 if qc.username.strip() else 270
+    # Edge layer (light, larger border) sits under the dark box for the thin outline.
+    events.append(f"Dialogue: 4,{s},{e},QBoxEdge,,0,0,0,,{{\\an7\\pos(70,{y})}}{body.upper()}")
+    events.append(f"Dialogue: 5,{s},{e},QBox,,0,0,0,,{{\\an7\\pos(70,{y})\\1c{white}}}{marked}")
+    return events
+
+
 def build_ass(plan: EditPlan, transcript_path: str, out_path: Path) -> Path:
     cap = plan.captions
     segments = _load_segments(transcript_path)
@@ -57,9 +116,12 @@ ScaledBorderAndShadow: yes
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Main,{family},{cap.size},{primary},{outline},&H00000000,-1,0,0,0,100,100,0,0,1,{cap.outline},0,2,80,80,{cap.margin_v},204
 Style: Hook,{hook_family},104,&H00FFFFFF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,7,0,8,90,90,300,204
+Style: QTag,{family},48,&H00FFFFFF,&H002828D6,&H00000000,-1,0,0,0,100,100,0,0,3,14,0,7,0,0,0,204
+Style: QBox,{family},58,&H00FFFFFF,&H00231F1E,&H64000000,-1,0,0,0,100,100,0,0,3,18,6,7,0,0,0,204
+Style: QBoxEdge,{family},58,&H00D8D0CF,&H00D8D0CF,&H00000000,-1,0,0,0,100,100,0,0,3,23,0,7,0,0,0,204
 
 [Events]
-Format: Layer, Start, End, Style, MarginL, MarginR, MarginV, Effect, Text
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
     lines = []
@@ -80,6 +142,8 @@ Format: Layer, Start, End, Style, MarginL, MarginR, MarginV, Effect, Text
             text = text.upper()
         text = text.replace("{", "(").replace("}", ")")  # ASS override guard
         lines.append(f"Dialogue: 0,{_ts(s)},{_ts(e)},Main,,0,0,0,,{text}")
+
+    lines.extend(_question_card_events(plan))
 
     out_path.write_text(header + "\n".join(lines) + "\n", encoding="utf-8")
     return out_path
