@@ -174,12 +174,16 @@ def render(plan: EditPlan, clip_id: str, transcript_path: str | None = None) -> 
         if wm_on:
             ww = max(2, int(W * max(0.05, min(0.9, wm.scale))))
             op = max(0.0, min(1.0, wm.opacity))
-            # centre the watermark over the GAMEPLAY region (below the facecam band if present)
+            # Place the watermark midway between the crosshair (centre of the gameplay) and
+            # the bottom edge, horizontally centred. The crosshair sits at the centre of the
+            # gameplay region: mid-screen normally, or below the cam band in the facecam layout.
             if plan.reframe.mode == "facecam_top" and plan.facecam.present:
                 top_h = round(H * min(0.7, max(0.15, plan.facecam.band)))
-                oy = f"{top_h}+(H-{top_h}-h)/2"
+                cross = (top_h + H) / 2.0
             else:
-                oy = "(H-h)/2"
+                cross = H / 2.0
+            wy = (cross + H) / 2.0                 # halfway from the crosshair to the bottom
+            oy = f"{wy:.0f}-h/2"
             fc.append(f"[0:v]{vf}[vbase]")
             fc.append(f"[{wm_idx}:v]scale={ww}:-1,format=rgba,colorchannelmixer=aa={op}[wm]")
             fc.append(f"[vbase][wm]overlay=(W-w)/2:{oy}[vout]")

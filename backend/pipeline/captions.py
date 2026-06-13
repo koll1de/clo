@@ -11,6 +11,13 @@ from pathlib import Path
 
 from ..editplan import EditPlan, font_family
 
+# Intro-hook (persistent title) sizing. We position each wrapped title line ourselves so we
+# can control the leading: libass has no line-spacing tag and otherwise uses the font's full
+# line height, which reads too airy for a big uppercase title. HOOK_LINE_SPACING is the gap
+# between baselines as a fraction of the font size — lower = tighter lines.
+HOOK_SIZE = 104
+HOOK_LINE_SPACING = 0.92
+
 
 def _ass_color(hex_color: str) -> str:
     """#RRGGBB -> ASS &HBBGGRR (no alpha)."""
@@ -118,7 +125,7 @@ ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Main,{family},{cap.size},{primary},{outline},&H00000000,-1,0,0,0,100,100,0,0,1,{cap.outline},0,2,80,80,{cap.margin_v},204
-Style: Hook,{hook_family},104,{hook_color},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,7,0,8,90,90,300,204
+Style: Hook,{hook_family},{HOOK_SIZE},{hook_color},&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,7,0,8,90,90,300,204
 Style: QTag,{family},48,&H00FFFFFF,&H002828D6,&H00000000,-1,0,0,0,100,100,0,0,3,14,0,7,0,0,0,204
 Style: QBox,{family},58,&H00FFFFFF,&H00231F1E,&H64000000,-1,0,0,0,100,100,0,0,3,18,6,7,0,0,0,204
 Style: QBoxEdge,{family},58,&H00D8D0CF,&H00D8D0CF,&H00000000,-1,0,0,0,100,100,0,0,3,23,0,7,0,0,0,204
@@ -129,22 +136,27 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     lines = []
     if hook.enabled and hook.text.strip():
-        htext = _wrap(hook.text.strip().upper().replace("{", "(").replace("}", ")"), 16)
+        htext = hook.text.strip().upper().replace("{", "(").replace("}", ")")
+        wrapped = _wrap(htext, 16).split("\\N")
         clip_dur = plan.end - plan.start
         hook_end = clip_dur if hook.persist else min(hook.seconds, clip_dur)
         hook_x = plan.width // 2
+        lh = max(1, round(HOOK_SIZE * HOOK_LINE_SPACING))   # our own baseline-to-baseline leading
         if plan.reframe.mode == "facecam_top" and plan.facecam.present:
-            # centre the title ON the seam between the cam (top) and the gameplay (below)
+            # centre the title block ON the seam between the cam (top) and the gameplay (below)
             seam = int(plan.height * min(0.7, max(0.15, plan.facecam.band)))
-            an, hook_y = 5, seam
+            an = 5
+            y0 = seam - (len(wrapped) - 1) * lh // 2
         elif plan.reframe.mode == "gameplay_blur":
-            an, hook_y = 8, 70           # full top, over the top blurred band (no cam)
+            an, y0 = 8, 70               # full top, over the top blurred band (no cam)
         else:
-            an, hook_y = 8, 140
-        lines.append(
-            f"Dialogue: 1,{_ts(0)},{_ts(hook_end)},Hook,,0,0,0,,"
-            f"{{\\an{an}\\pos({hook_x},{hook_y})}}{htext}"
-        )
+            an, y0 = 8, 140
+        # One Dialogue per wrapped line so we control the leading (libass has no line-spacing tag).
+        for i, ln in enumerate(wrapped):
+            lines.append(
+                f"Dialogue: 1,{_ts(0)},{_ts(hook_end)},Hook,,0,0,0,,"
+                f"{{\\an{an}\\pos({hook_x},{y0 + i * lh})}}{ln}"
+            )
     for seg in segments:
         s = seg["start"] - plan.start
         e = seg["end"] - plan.start

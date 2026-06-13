@@ -5,10 +5,17 @@ paths:
 
 ingest:
   download_chat: true       # also pull Twitch chat for VOD URLs
+  # YouTube often bot-gates downloads ("Sign in to confirm you're not a bot"). Passing your
+  # logged-in cookies bypasses it. Set cookies_from_browser to the browser you watch YouTube
+  # in: chrome | edge | firefox | brave | opera | vivaldi  (leave "" to disable). The browser
+  # may need to be closed for yt-dlp to read its cookie database.
+  cookies_from_browser: "brave"
+  # Or point at an exported cookies.txt (Netscape format); takes precedence when set.
+  cookies_file: ""
 
 transcribe:
   model: large-v3           # faster-whisper model (large-v3 = best, fits in 24GB)
-  language: ru              # stream is mostly Russian
+  language: auto            # auto = detect per VOD (EN vod -> EN titles, RU -> RU). Force with e.g. "ru".
   device: cuda
   compute_type: float16     # fast + accurate on a 3090
   batched: true             # BatchedInferencePipeline — much faster on multi-hour VODs

@@ -46,6 +46,11 @@ def transcribe(job: Job) -> Job:
 
     cfg = CONFIG["transcribe"]
     model = _get_model()
+    # language: a fixed code (e.g. "ru") forces that language; "auto"/""/None lets whisper
+    # detect it from the audio. Detection is what makes an English VOD produce an English
+    # transcript (and therefore English titles) while a Russian VOD stays Russian.
+    lang_cfg = (cfg.get("language") or "").strip().lower()
+    language = None if lang_cfg in ("", "auto", "detect") else lang_cfg
     # Batched inference is much faster on long VODs (multi-hour streams). It needs
     # spare VRAM for the larger batch; whisper still unloads before the LLM stage.
     if cfg.get("batched"):
@@ -53,7 +58,7 @@ def transcribe(job: Job) -> Job:
         pipeline = BatchedInferencePipeline(model=model)
         segments, info = pipeline.transcribe(
             str(work_audio),
-            language=cfg["language"],
+            language=language,
             word_timestamps=True,
             vad_filter=True,
             batch_size=int(cfg.get("batch_size", 16)),
@@ -61,10 +66,11 @@ def transcribe(job: Job) -> Job:
     else:
         segments, info = model.transcribe(
             str(work_audio),
-            language=cfg["language"],
+            language=language,
             word_timestamps=True,
             vad_filter=True,
         )
+    print(f"[transcribe] language={info.language} (config: {lang_cfg or 'auto'})")
 
     out = {
         "language": info.language,

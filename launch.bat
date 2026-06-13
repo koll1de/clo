@@ -9,12 +9,19 @@ if not exist ".venv\Scripts\python.exe" (
     exit /b 1
 )
 
-REM Make sure the Ollama server (local LLM) is running.
-curl -s http://127.0.0.1:11434 >nul 2>&1
-if errorlevel 1 (
-    echo Starting Ollama...
-    start "" "%LOCALAPPDATA%\Programs\Ollama\ollama app.exe"
-    timeout /t 3 >nul
+REM Start the Ollama server only if it's actually installed. It's the local LLM, used
+REM only when a provider in config.yaml is set to 'ollama'. With the Anthropic provider
+REM it isn't needed, so a missing Ollama must NOT stop launch.
+set "OLLAMA_EXE=%LOCALAPPDATA%\Programs\Ollama\ollama app.exe"
+if not exist "%OLLAMA_EXE%" (
+    echo Ollama not installed - skipping ^(using the Anthropic provider^).
+) else (
+    curl -s http://127.0.0.1:11434 >nul 2>&1
+    if errorlevel 1 (
+        echo Starting Ollama...
+        start "" "%OLLAMA_EXE%"
+        timeout /t 3 >nul
+    )
 )
 
 echo Starting Clipmaker.ai at http://localhost:8000 ...

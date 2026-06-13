@@ -31,6 +31,7 @@ class Job(BaseModel):
     status: JobStatus = JobStatus.queued
     error: Optional[str] = None
     vod_path: Optional[str] = None
+    duration: Optional[float] = None   # VOD length in seconds (probed at ingest)
     chat_path: Optional[str] = None
     transcript_path: Optional[str] = None
     created_at: float = 0.0
