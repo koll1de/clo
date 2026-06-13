@@ -43,6 +43,7 @@ class Clip(BaseModel):
     kind: str                # funny_interaction | irl_interruption | big_reaction | ace | clutch | multikill_deagle | tips_to_chat
     score: float
     title: str = ""
+    hook: str = ""           # short on-screen opener (from the vision pass)
     reason: str = ""         # why the AI thinks this is clip-worthy
     quote: str = ""          # the key spoken line (becomes the question-card text)
     question_username: str = ""              # chat user he's answering, if named

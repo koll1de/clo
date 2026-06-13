@@ -31,7 +31,9 @@ def _ts(seconds: float) -> str:
     return f"{h:d}:{m:02d}:{s:02d}.{cs:02d}"
 
 
-def _load_segments(transcript_path: str) -> list[dict]:
+def _load_segments(transcript_path: str | None) -> list[dict]:
+    if not transcript_path:
+        return []
     with open(transcript_path, "r", encoding="utf-8") as f:
         return json.load(f).get("segments", [])
 
@@ -95,9 +97,9 @@ def _question_card_events(plan: EditPlan) -> list[str]:
     return events
 
 
-def build_ass(plan: EditPlan, transcript_path: str, out_path: Path) -> Path:
+def build_ass(plan: EditPlan, transcript_path: str | None, out_path: Path) -> Path:
     cap = plan.captions
-    segments = _load_segments(transcript_path)
+    segments = _load_segments(transcript_path) if cap.enabled else []
 
     family = font_family(cap.font)
     primary = _ass_color(cap.primary)

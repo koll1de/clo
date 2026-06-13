@@ -38,11 +38,19 @@ llm:
 
 # Extra moment signals layered on top of the transcript brain.
 signals:
+  # Vision gate: a local vision model WATCHES each candidate moment and keeps only the
+  # genuinely entertaining ones (this is what stops context-free "clips of nothing").
+  vision:
+    enabled: true
+    model: qwen2.5vl:7b       # local Ollama vision model (pulled via setup)
+    frames_per_clip: 6        # frames sampled across each candidate for the model to see
+    min_score: 0.6            # keep only candidates the model rates at least this clipworthy
+    max_verify: 24            # cap how many candidates we run the vision model on per VOD
   audio:
     enabled: true             # find loudness/excitement spikes (screams, hype, hard laughing)
     corroborate_boost: 1.2    # multiply a clip's score when a loud reaction overlaps it
-    min_reaction_level: 3.0   # a spike this many× louder than baseline can become its own clip
-    max_new_candidates: 4     # cap audio-only candidates per VOD (quality over quantity)
+    min_reaction_level: 2.5   # a spike this many× louder than baseline becomes a candidate
+    max_new_candidates: 18    # propose generously; the vision gate filters out the weak ones
   chat:
     enabled: true             # Twitch chat message-velocity + emote spikes (VOD URLs only)
     corroborate_boost: 1.2
@@ -59,15 +67,24 @@ signals:
     templates_dir: data/killfeed_templates  # drop weapon-icon PNGs here to confirm kills
 
 edit:
-  subtitles: true           # master toggle; can override per-clip in the UI
-  subtitle_font: Segoe Black # must be a Cyrillic-capable font (see backend/editplan.py FONTS)
-  reframe_mode: fill_crop    # fill_crop (zoomed, immersive) or fit_blur (full width + blurred bg)
+  subtitles: false          # OFF — Renyan-style clips have no running captions
+  subtitle_font: Bahnschrift # nicer modern condensed font (Cyrillic-capable); see editplan.py FONTS
+  reframe_mode: facecam_top  # facecam_top (cam on top + gameplay below), fill_crop, or fit_blur
   reframe_zoom: 1.0
-  zoom_punch_ins: true
+  zoom_punch_ins: false     # no blind auto-zooms; the vision pass decides emphasis instead
   speed_ramps: true
   sound_effects: true
   killfeed_highlights: true
   intro_hook: true
+  # Streamer webcam location in the source (fractions of the frame). Auto-detected per
+  # job when possible; these are the fallback/defaults (Renyan = top-left).
+  facecam:
+    present: true
+    x: 0.0
+    y: 0.0
+    w: 0.21
+    h: 0.26
+    band: 0.34              # share of the vertical clip the cam occupies on top
 
 review:
   hands_off: false          # true = skip review queue, auto-publish everything

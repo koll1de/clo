@@ -18,6 +18,7 @@ from . import render as render_stage
 from . import audio as audio_stage
 from . import chat as chat_stage
 from . import killfeed as killfeed_stage
+from . import facecam as facecam_stage
 
 
 def _auto_publish(clips: list) -> None:
@@ -84,15 +85,31 @@ def run_job(job_id: str) -> None:
                     job_id, clips, seqs, job.transcript_path)
             except Exception as e:
                 print(f"[killfeed] signal failed: {e}")
+        # vision gate: the model WATCHES each candidate and keeps only the good ones
+        if CONFIG.get("signals", {}).get("vision", {}).get("enabled", True):
+            try:
+                clips = moments_stage.vision_verify(job_id, job.vod_path, clips)
+            except Exception as e:
+                print(f"[vision] verify failed: {e}")
         for c in clips:
             store.save_clip(c)
+
+        # detect the streamer's webcam once so every clip uses the same cam box
+        edit_cfg = dict(CONFIG["edit"])
+        try:
+            det = facecam_stage.detect_facecam(job.vod_path)
+            if det:
+                edit_cfg["facecam"] = {**(edit_cfg.get("facecam") or {}), **det}
+                print(f"[facecam] detected {det.get('corner')} {det}")
+        except Exception as e:
+            print(f"[facecam] detection failed: {e}")
 
         # 4) render each candidate into a reviewable vertical clip
         job.status = JobStatus.rendering
         store.save_job(job)
         for c in clips:
             try:
-                plan = default_plan(job.vod_path, c, CONFIG["edit"])
+                plan = default_plan(job.vod_path, c, edit_cfg)
                 out = render_stage.render(plan, c.id, transcript_path=job.transcript_path)
                 c.file_path = str(out)
                 c.edit_plan = plan.model_dump()

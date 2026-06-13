@@ -16,6 +16,7 @@ WIN_FONTS = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
 
 # Friendly name -> (file on disk, font family name libass/ASS expects). All Cyrillic-capable.
 FONTS: dict[str, dict] = {
+    "Bahnschrift": {"file": "bahnschrift.ttf", "family": "Bahnschrift"},  # modern condensed, Cyrillic
     "Segoe Black": {"file": "seguibl.ttf", "family": "Segoe UI Black"},
     "Arial Black": {"file": "ariblk.ttf", "family": "Arial Black"},
     "Impact":      {"file": "impact.ttf", "family": "Impact"},
@@ -33,10 +34,23 @@ def font_family(name: str) -> str:
     return FONTS.get(name, FONTS["Segoe Black"])["family"]
 
 
+class Facecam(BaseModel):
+    """Source location of the streamer's webcam (fractions of the frame) and how big
+    its band is in the vertical clip. Used by the 'facecam_top' reframe (Renyan style:
+    reaction cam on top, gameplay below)."""
+    present: bool = False
+    x: float = 0.0            # webcam box in the source, as fractions of W/H
+    y: float = 0.0
+    w: float = 0.21
+    h: float = 0.26
+    band: float = 0.34        # fraction of the 1920px-tall clip the cam occupies on top
+
+
 class Reframe(BaseModel):
-    mode: Literal["fill_crop", "fit_blur"] = "fill_crop"
+    mode: Literal["fill_crop", "fit_blur", "facecam_top"] = "fill_crop"
     zoom: float = 1.0          # 1.0 = just covers the frame; >1 zooms further in
     x_center: float = 0.5      # horizontal crop center (0=left, 1=right)
+    y_center: float = 0.5      # vertical crop center for the gameplay region
 
 
 class Captions(BaseModel):
@@ -81,6 +95,7 @@ class EditPlan(BaseModel):
     height: int = 1920
     fps: int = 30
     reframe: Reframe = Field(default_factory=Reframe)
+    facecam: Facecam = Field(default_factory=Facecam)
     captions: Captions = Field(default_factory=Captions)
     intro_hook: IntroHook = Field(default_factory=IntroHook)
     question_card: QuestionCard = Field(default_factory=QuestionCard)
@@ -92,18 +107,23 @@ def default_plan(source: str, clip, edit_cfg: dict) -> EditPlan:
     plan = EditPlan(source=source, start=clip.start, end=clip.end)
     plan.reframe.mode = edit_cfg.get("reframe_mode", "fill_crop")
     plan.reframe.zoom = float(edit_cfg.get("reframe_zoom", 1.0))
-    plan.captions.enabled = bool(edit_cfg.get("subtitles", True))
-    plan.captions.font = edit_cfg.get("subtitle_font", "Segoe Black")
+    plan.captions.enabled = bool(edit_cfg.get("subtitles", False))
+    plan.captions.font = edit_cfg.get("subtitle_font", "Bahnschrift")
     plan.intro_hook.enabled = bool(edit_cfg.get("intro_hook", True))
-    plan.intro_hook.text = clip.title or ""
+    plan.intro_hook.text = (getattr(clip, "hook", "") or clip.title or "")
 
-    # If audio found the loudest beat in this clip, punch in on it.
-    peak = getattr(clip, "audio_peak", None)
-    if edit_cfg.get("zoom_punch_ins", True) and peak is not None:
-        rel = peak - clip.start
-        if 0.2 < rel < (clip.end - clip.start) - 0.2:
-            plan.effects.append(Effect(type="zoom", t0=round(rel - 0.4, 2),
-                                       t1=round(rel + 1.1, 2), params={"amount": 0.2}))
+    # Facecam (Renyan-style cam-on-top layout). Defaults from config; per-job detection
+    # can override via edit_cfg["facecam"].
+    fcfg = edit_cfg.get("facecam") or {}
+    plan.facecam = Facecam(**{**Facecam().model_dump(), **{k: v for k, v in fcfg.items()
+                                                           if k in Facecam.model_fields}})
+    # honour a per-clip detected rect if present
+    det = getattr(clip, "facecam_rect", None)
+    if det:
+        for k in ("x", "y", "w", "h", "present"):
+            if k in det:
+                setattr(plan.facecam, k, det[k])
+
     # When he's talking to chat / giving tips, show the question card from his line.
     if clip.kind == "tips_to_chat":
         text = (getattr(clip, "quote", "") or clip.title or "").strip()

@@ -245,6 +245,40 @@ def apply_chat_signal(
     return _dedupe(clips)
 
 
+def vision_verify(job_id: str, vod_path: str, clips: list[Clip]) -> list[Clip]:
+    """The gate: the vision model WATCHES each candidate and we keep only the ones it
+    judges genuinely clipworthy, taking its title/kind/hook/score as authoritative.
+    This is what removes the context-free 'clip of nothing' candidates."""
+    from . import vision
+    vcfg = CONFIG.get("signals", {}).get("vision", {})
+    if not vcfg.get("enabled", True) or not clips:
+        return clips
+    min_score = float(vcfg.get("min_score", 0.6))
+    frames = int(vcfg.get("frames_per_clip", 6))
+    max_verify = int(vcfg.get("max_verify", 24))
+
+    # only spend vision compute on the most promising candidates
+    cands = sorted(clips, key=lambda c: c.score, reverse=True)[:max_verify]
+    kept: list[Clip] = []
+    for c in cands:
+        v = vision.analyze_clip(vod_path, c.start, c.end, frames=frames)
+        if v is None:
+            continue  # couldn't see it -> don't risk a bad clip
+        if not v.clipworthy or v.score < min_score:
+            print(f"[vision] dropped {c.start:.0f}-{c.end:.0f}s ({v.score:.2f} {v.kind}): {v.reason}")
+            continue
+        c.kind = v.kind
+        c.title = v.title or c.title
+        c.hook = v.hook
+        c.reason = v.reason or c.reason
+        c.score = round(v.score, 4)
+        if "vision" not in c.signals:
+            c.signals.append("vision")
+        kept.append(c)
+    print(f"[vision] kept {len(kept)}/{len(cands)} candidates")
+    return _dedupe(kept)
+
+
 def apply_killfeed_signal(
     job_id: str, clips: list[Clip], sequences: list, transcript_path: str
 ) -> list[Clip]:

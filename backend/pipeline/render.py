@@ -27,6 +27,8 @@ def _stage_font(name: str) -> None:
 
 def _reframe_filter(plan: EditPlan) -> str:
     W, H = plan.width, plan.height
+    if plan.reframe.mode == "facecam_top":
+        return _facecam_top_filter(plan)
     if plan.reframe.mode == "fit_blur":
         return (
             f"split=2[bg][fg];"
@@ -42,6 +44,29 @@ def _reframe_filter(plan: EditPlan) -> str:
         f"scale=-2:{scaled_h},"
         f"crop={W}:{H}:(in_w-{W})*{xc}:(in_h-{H})/2,setsar=1"
     )
+
+
+def _facecam_top_filter(plan: EditPlan) -> str:
+    """Renyan-style vertical: the streamer's webcam fills a band on top, the gameplay
+    fills the rest below — each scaled-to-cover then centre-cropped (no distortion)."""
+    W, H = plan.width, plan.height
+    fc = plan.facecam
+    top_h = max(2, round(H * min(0.7, max(0.15, fc.band))) // 2 * 2)  # even
+    bot_h = H - top_h
+    # webcam source region (fractions -> 'in_w'/'in_h' expressions, robust to any source size)
+    cx, cy, cw, ch = fc.x, fc.y, fc.w, fc.h
+    cam = (
+        f"crop=in_w*{cw}:in_h*{ch}:in_w*{cx}:in_h*{cy},"
+        f"scale={W}:{top_h}:force_original_aspect_ratio=increase,crop={W}:{top_h},setsar=1"
+    )
+    # gameplay: centre of the frame (cam sits in a corner, so a centred crop avoids it),
+    # nudgeable via x_center/y_center
+    xc, yc = plan.reframe.x_center, plan.reframe.y_center
+    game = (
+        f"scale={W}:{bot_h}:force_original_aspect_ratio=increase,"
+        f"crop={W}:{bot_h}:(in_w-{W})*{xc}:(in_h-{bot_h})*{yc},setsar=1"
+    )
+    return f"split=2[cam][game];[cam]{cam}[camf];[game]{game}[gamef];[camf][gamef]vstack=inputs=2"
 
 
 def _zoom_filter(plan: EditPlan) -> str | None:
@@ -87,7 +112,7 @@ def render(plan: EditPlan, clip_id: str, transcript_path: str | None = None) -> 
         or (plan.intro_hook.enabled and plan.intro_hook.text)
         or (plan.question_card.enabled and plan.question_card.text.strip())
     )
-    if needs_ass and transcript_path:
+    if needs_ass:
         captions_mod.build_ass(plan, transcript_path, ass_path)
         _stage_font(plan.captions.font)
         vf_parts.append(f"ass={ass_path.name}:fontsdir=.")

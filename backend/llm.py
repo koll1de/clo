@@ -39,6 +39,35 @@ def has_model(model: str | None = None) -> bool:
         return False
 
 
+def chat_vision(system: str, user: str, images_b64: list[str], schema: dict,
+                *, model: str | None = None, temperature: float = 0.2,
+                num_ctx: int = 8192) -> dict:
+    """Send images + a prompt to a vision model (e.g. qwen2.5vl) and return JSON
+    constrained to `schema`. Images are base64-encoded JPEG/PNG (no data: prefix)."""
+    payload = {
+        "model": model or CONFIG.get("signals", {}).get("vision", {}).get("model", "qwen2.5vl:7b"),
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user, "images": images_b64},
+        ],
+        "format": schema,
+        "stream": False,
+        "options": {"num_ctx": num_ctx, "temperature": temperature},
+    }
+    try:
+        r = requests.post(f"{_HOST}/api/chat", json=payload, timeout=600)
+        r.raise_for_status()
+    except requests.RequestException as e:
+        raise OllamaError(f"Ollama vision request failed: {e}") from e
+    content = r.json().get("message", {}).get("content", "").strip()
+    if not content:
+        raise OllamaError("Ollama vision returned an empty response")
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as e:
+        raise OllamaError(f"Ollama vision returned non-JSON: {content[:500]}") from e
+
+
 def chat_json(system: str, user: str, schema: dict, *, temperature: float = 0.4) -> dict:
     """Send a chat request constrained to `schema` and return parsed JSON."""
     payload = {
