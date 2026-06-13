@@ -7,7 +7,7 @@ the clip's stored EditPlan, and re-render. No re-analysis of the VOD needed.
 from __future__ import annotations
 
 from .. import llm, store
-from ..editplan import EditPlan, FONTS
+from ..editplan import EditPlan, Effect, FONTS
 from ..models import Clip
 from . import render as render_stage
 
@@ -27,6 +27,9 @@ _REVISION_SCHEMA = {
         "trim_end_delta": {"type": "number"},
         "intro_hook_enabled": {"type": "boolean"},
         "intro_hook_text": {"type": "string"},
+        "question_card_enabled": {"type": "boolean"},
+        "add_punch_in_at": {"type": "number"},
+        "clear_punch_ins": {"type": "boolean"},
     },
 }
 
@@ -43,6 +46,10 @@ _SYSTEM = (
     "- trim_end_delta: seconds to move the END. Positive makes it longer at the end, "
     "negative trims the end (e.g. 'cut the last 3 seconds' -> -3).\n"
     "- intro_hook_text: the big text shown at the very start.\n"
+    "- question_card_enabled: show/hide the red-tag + question overlay (the chat-question card).\n"
+    "- add_punch_in_at: clip-relative seconds where to add a zoom punch-in on the action "
+    "(e.g. 'zoom in at 5s' / 'добавь зум на 5 секунде' -> 5).\n"
+    "- clear_punch_ins: true to remove all existing zoom punch-ins ('убери зумы').\n"
     "IMPORTANT: 'use the Impact font' / 'шрифт Impact' means caption_font='Impact' "
     "(NOT intro_hook_text). Only set intro_hook_text when the user gives actual hook wording.\n"
     "Examples:\n"
@@ -77,6 +84,13 @@ def _apply(plan: EditPlan, patch: dict) -> EditPlan:
         plan.intro_hook.enabled = bool(patch["intro_hook_enabled"])
     if "intro_hook_text" in patch:
         plan.intro_hook.text = str(patch["intro_hook_text"])
+    if "question_card_enabled" in patch:
+        plan.question_card.enabled = bool(patch["question_card_enabled"])
+    if patch.get("clear_punch_ins"):
+        plan.effects = [e for e in plan.effects if e.type != "zoom"]
+    if "add_punch_in_at" in patch:
+        t = max(0.0, float(patch["add_punch_in_at"]))
+        plan.effects.append(Effect(type="zoom", t0=t, t1=t + 1.5, params={"amount": 0.2}))
     # keep the clip valid
     if plan.end - plan.start < 2.0:
         plan.end = plan.start + 2.0

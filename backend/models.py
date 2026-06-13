@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from enum import Enum
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class JobStatus(str, Enum):
@@ -44,6 +44,9 @@ class Clip(BaseModel):
     score: float
     title: str = ""
     reason: str = ""         # why the AI thinks this is clip-worthy
+    quote: str = ""          # the key spoken line (becomes the question-card text)
+    question_username: str = ""              # chat user he's answering, if named
+    question_highlights: list[str] = Field(default_factory=list)  # words to gold-highlight
     status: ClipStatus = ClipStatus.pending
     file_path: Optional[str] = None
     edit_plan: Optional[dict] = None

@@ -98,7 +98,13 @@ def default_plan(source: str, clip, edit_cfg: dict) -> EditPlan:
     plan.intro_hook.text = clip.title or ""
     # When he's talking to chat / giving tips, show the question card from his line.
     if clip.kind == "tips_to_chat":
-        plan.question_card.enabled = True
-        plan.question_card.username = ""  # filled from chat later; blank for now
-        plan.question_card.text = clip.title or ""
+        text = (getattr(clip, "quote", "") or clip.title or "").strip()
+        if text:
+            plan.question_card.enabled = True
+            plan.question_card.text = text
+            plan.question_card.username = getattr(clip, "question_username", "") or ""
+            plan.question_card.highlights = list(getattr(clip, "question_highlights", []) or [])
+            # show it after the intro hook, for most of the clip
+            plan.question_card.t0 = round(plan.intro_hook.seconds + 0.2, 2) if plan.intro_hook.enabled else 0.3
+            plan.question_card.t1 = round(min(plan.question_card.t0 + 6.0, clip.end - clip.start), 2)
     return plan

@@ -39,6 +39,8 @@ _SCHEMA = {
                     "title": {"type": "string"},
                     "reason": {"type": "string"},
                     "quote": {"type": "string"},
+                    "question_username": {"type": "string"},
+                    "question_highlights": {"type": "array", "items": {"type": "string"}},
                     "confidence": {"type": "number"},
                 },
                 "required": ["start", "end", "kind", "title", "reason", "confidence"],
@@ -73,7 +75,13 @@ _SYSTEM = (
     "gameplay chatter that isn't entertaining.\n"
     "- title: a punchy Russian title for the Short (the audience is Russian).\n"
     "- reason: one short English sentence explaining why it's clip-worthy (for the editor).\n"
-    "- quote: the funniest/key line, verbatim from the transcript.\n"
+    "- quote: the funniest/key line, verbatim from the transcript. For a tips_to_chat "
+    "moment this MUST be the question or tip he is answering, phrased as a short "
+    "on-screen line (it becomes a question card).\n"
+    "- question_username: for tips_to_chat, the chat viewer's name he is replying to if "
+    "he says it (else \"\"). Empty for other kinds.\n"
+    "- question_highlights: for tips_to_chat, 1-3 key words from `quote` to emphasise in "
+    "gold on the card (else []). Empty for other kinds.\n"
     "- confidence: 0..1, how strong this clip is. Be selective; quality over quantity.\n"
     "- If nothing in this chunk is clip-worthy, return an empty list."
 )
@@ -161,6 +169,9 @@ def find_transcript_moments(job_id: str, transcript_path: str) -> list[Clip]:
                 score=round(score, 4),
                 title=m.get("title", "").strip(),
                 reason=m.get("reason", "").strip(),
+                quote=m.get("quote", "").strip(),
+                question_username=m.get("question_username", "").strip(),
+                question_highlights=[h.strip() for h in m.get("question_highlights", []) if h.strip()],
                 status=ClipStatus.pending,
             ))
 

@@ -1,4 +1,4 @@
-"""Make the pip-installed NVIDIA CUDA DLLs (cuBLAS/cuDNN) discoverable on Windows.
+r"""Make the pip-installed NVIDIA CUDA DLLs (cuBLAS/cuDNN) discoverable on Windows.
 
 ctranslate2 loads cublas64_12.dll / cudnn_*.dll by name. The nvidia-*-cu12 wheels
 drop these inside site-packages\nvidia\<lib>\bin, which Windows does not search by
