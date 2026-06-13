@@ -86,6 +86,8 @@
     let selectedJob = null;
     const bust = {};       // clipId -> cache-bust token, bumped after a re-render
     const prevBusy = {};   // clipId -> last busy state, to detect re-render completion
+    let lastClipsSig = ''; // signature of the rendered grid; skip rebuild if unchanged
+                           // (rebuilding the grid recreates <video> tags and kills playback)
 
     async function checkHealth() {
       try { const r = await fetch('/api/health'); if (r.ok) $('health').classList.add('ok'); } catch (e) {}
@@ -168,6 +170,13 @@
       const counts = clips.reduce((a,c)=>(a[c.status]=(a[c.status]||0)+1,a),{});
       $('reviewMeta').textContent = `· ${clips.length} clips ` +
         Object.entries(counts).map(([k,v])=>`· ${v} ${k}`).join(' ');
+      // Only rebuild the grid when something actually changed — otherwise the poll
+      // would recreate the <video> elements every 3s and interrupt playback.
+      const sig = selectedJob + '|' + clips.map(c =>
+        `${c.id}:${c.status}:${c.busy?1:0}:${c.publishing?1:0}:${c.file_path?1:0}:${bust[c.id]||0}:${c.last_request||''}`
+      ).join('|');
+      if (sig === lastClipsSig) return;
+      lastClipsSig = sig;
       $('clips').innerHTML = clips.length ? clips.map(clipCard).join('')
         : '<div class="muted">No clips yet — still finding moments…</div>';
     }
