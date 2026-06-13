@@ -47,8 +47,14 @@ signals:
     min_burst_level: 3.0      # messages/sec this many× the median can become its own clip
     max_new_candidates: 4
   killfeed:
-    enabled: false            # CS2 kill-feed OCR (aces/clutches/deagle strings) — needs tuning
-                              # on your own full-res HUD; see backend/pipeline/killfeed.py
+    enabled: false            # CS2 kill-feed detection — TUNE on your own full-res HUD first
+    sample_fps: 4.0           # frames/sec to scan (higher = more accurate, slower)
+    roi: {x: 0.55, y: 0.02, w: 0.44, h: 0.28}  # kill-feed region as fractions of the frame
+    row_min_frac: 0.06        # min fraction of bright pixels for a row to count
+    multikill_rows: 3         # rows appearing within window_seconds = a multi-kill
+    ace_rows: 5               # this many = an ace
+    window_seconds: 6.0       # how fast the kills must land to count as one sequence
+    templates_dir: data/killfeed_templates  # drop weapon-icon PNGs here to confirm kills
 
 edit:
   subtitles: true           # master toggle; can override per-clip in the UI

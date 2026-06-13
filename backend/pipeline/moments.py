@@ -245,6 +245,38 @@ def apply_chat_signal(
     return _dedupe(clips)
 
 
+def apply_killfeed_signal(
+    job_id: str, clips: list[Clip], sequences: list, transcript_path: str
+) -> list[Clip]:
+    """Turn detected kill sequences (aces / multi-kill strings) into candidates and
+    corroborate any spoken hype that overlaps them."""
+    if not sequences:
+        return clips
+    weights = CONFIG["priority"]
+    clip_cfg = CONFIG["clips"]
+    segments = _load_transcript(transcript_path).get("segments", [])
+
+    for ks in sequences:
+        # corroborate an overlapping spoken moment (his hype during the play)
+        for c in clips:
+            if min(c.end, ks.end) - max(c.start, ks.start) > 0 and "killfeed" not in c.signals:
+                c.signals.append("killfeed")
+                c.score = round(min(c.score * 1.2, 1.5), 4)
+        # the kill sequence itself is a candidate
+        start = max(0.0, ks.start - 2.0)
+        end = max(start + clip_cfg["min_seconds"], ks.end + 2.0)
+        clips.append(Clip(
+            id=uuid.uuid4().hex[:12], job_id=job_id,
+            start=round(start, 2), end=round(end, 2), kind=ks.kind,
+            score=round(0.85 * float(weights.get(ks.kind, 0.55)), 4),
+            title=_nearest_text(segments, ks.peak)[:80] or ks.kind.replace("_", " ").title(),
+            reason=f"Kill-feed detected {ks.kills} kills in a burst ({ks.kind}).",
+            audio_peak=round(ks.peak, 2), signals=["killfeed"],
+            status=ClipStatus.pending,
+        ))
+    return _dedupe(clips)
+
+
 def find_transcript_moments(job_id: str, transcript_path: str) -> list[Clip]:
     cfg = CONFIG["llm"]
     weights = CONFIG["priority"]

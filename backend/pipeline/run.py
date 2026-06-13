@@ -17,6 +17,7 @@ from . import moments as moments_stage
 from . import render as render_stage
 from . import audio as audio_stage
 from . import chat as chat_stage
+from . import killfeed as killfeed_stage
 
 
 def _auto_publish(clips: list) -> None:
@@ -75,6 +76,14 @@ def run_job(job_id: str) -> None:
                     job_id, clips, bursts, job.transcript_path)
             except Exception as e:
                 print(f"[chat] signal failed: {e}")
+        # kill-feed signal: aces / multi-kill strings (needs tuning on real HUD)
+        if CONFIG.get("signals", {}).get("killfeed", {}).get("enabled", False):
+            try:
+                seqs = killfeed_stage.find_kill_sequences(job.vod_path)
+                clips = moments_stage.apply_killfeed_signal(
+                    job_id, clips, seqs, job.transcript_path)
+            except Exception as e:
+                print(f"[killfeed] signal failed: {e}")
         for c in clips:
             store.save_clip(c)
 
