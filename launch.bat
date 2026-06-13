@@ -19,4 +19,5 @@ if errorlevel 1 (
 
 echo Starting Clipmaker.ai at http://localhost:8000 ...
 start "" http://localhost:8000
-call .venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+REM --reload: picks up code/UI changes automatically (no manual restart needed)
+call .venv\Scripts\python.exe -m uvicorn backend.main:app --host 127.0.0.1 --port 8000 --reload

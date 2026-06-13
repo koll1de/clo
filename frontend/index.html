@@ -117,14 +117,15 @@
         const running = RUNNING.includes(j.status);
         const name = (j.source||'').split(/[\\/]/).pop();
         return `
-        <div class="job ${selectedJob===j.id?'sel':''}" onclick="selectJob('${j.id}')">
+        <div class="job ${selectedJob===j.id?'sel':''}" data-jobid="${j.id}" onclick="selectJob('${j.id}')">
           <div style="min-width:0;flex:1">
             <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${name}</div>
             <div class="muted">${j.source_type} · ${j.id}</div>
           </div>
           <span class="pill ${j.status}">${j.status.replace(/_/g,' ')}</span>
           ${running ? `<button class="ghost" title="Stop the clipmaking" onclick="event.stopPropagation();killJob('${j.id}')">Stop</button>` : ''}
-          <button class="red" title="Delete job + VOD + clips" onclick="event.stopPropagation();deleteJob('${j.id}')">✕</button>
+          <button title="Delete job (and its VOD + clips)" onclick="event.stopPropagation();deleteJob('${j.id}')"
+                  style="background:none;border:none;cursor:pointer;font-size:15px;line-height:1;opacity:.55;padding:2px 4px">🗑️</button>
         </div>`;
       }).join('');
     }
@@ -136,7 +137,14 @@
 
     window.deleteJob = async (id) => {
       if (!confirm('Delete this job and its clips (and the VOD, if no other job uses it)? This cannot be undone.')) return;
-      await fetch(`/api/jobs/${id}`, { method:'DELETE' });
+      let r;
+      try { r = await fetch(`/api/jobs/${id}`, { method:'DELETE' }); }
+      catch (e) { alert('Delete failed: ' + e); return; }
+      if (!r.ok) {
+        alert('Delete failed (HTTP ' + r.status + '). If you just updated the code, restart launch.bat so the server has the delete endpoint.');
+        return;
+      }
+      document.querySelector(`[data-jobid="${id}"]`)?.remove();   // remove the card immediately
       if (selectedJob === id) { selectedJob = null; $('clips').innerHTML=''; $('reviewCard').style.display='none'; }
       loadJobs();
     };
