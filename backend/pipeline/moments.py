@@ -293,8 +293,6 @@ def vision_verify(job_id: str, vod_path: str, clips: list[Clip],
         c.hook = v.hook
         c.reason = v.reason or c.reason
         c.score = round(v.score, 4)
-        c.sfx = v.sfx
-        c.sfx_time = v.sfx_time
         c.music = v.music
         c.layout = v.layout
         if "vision" not in c.signals:

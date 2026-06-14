@@ -12,16 +12,7 @@ import base64
 from dataclasses import dataclass
 
 from .. import llm
-from ..config import CONFIG, ROOT
-
-
-def _sfx_names() -> list[str]:
-    """Names (file stems) of the sound effects the AI may choose from, or [] if disabled."""
-    scfg = CONFIG.get("sfx", {})
-    if not scfg.get("enabled", True):
-        return []
-    d = ROOT / scfg.get("dir", "assets/sfx")
-    return sorted(p.stem for p in d.glob("*.mp3")) if d.exists() else []
+from ..config import CONFIG
 
 KINDS = [
     "ace", "clutch", "multikill", "insane_play", "funny_interaction",
@@ -73,15 +64,26 @@ _SYSTEM = (
     "defaults, rushes, retakes, after-plant holds, lurks, fakes, trade kills, stacking a site, "
     "the buy economy (eco / force-buy / full-buy / save), and 'smoke-criminal' kills (killing "
     "through a smoke). A pop-flash or one-way smoke setting up a kill is skilful.\n"
-    "- Genuinely clip-worthy plays: an ACE (all 5 enemies killed), a CLUTCH (winning a 1vX when "
-    "outnumbered — especially 1v3/1v4/1v5), a ninja defuse, an insane flick or lucky shot, or a "
-    "clean spray-down of several enemies.\n"
-    "MULTI-KILL RULE (be strict): a kill streak only counts as a clip-worthy 'multikill' if it "
-    "is at least 4 kills (a 4K or an ACE) — EXCEPT with the Desert Eagle (Deagle), where 3+ "
-    "kills is enough (a 3-Deagle string is impressive). A 2-3 kill streak with rifles/SMGs/AWP "
-    "is routine and NOT clip-worthy on its own; only clip it if a genuine reaction or funny "
-    "moment carries it. Read the kill feed (top-right): it shows the weapon icon and how many "
-    "kills happened in the streak.\n\n"
+    "- Genuinely clip-worthy plays: an ACE (THE STREAMER personally kills all 5 enemies), a "
+    "CLUTCH (HE wins a 1vX when outnumbered — especially 1v3/1v4/1v5), a ninja defuse, an "
+    "insane flick or lucky shot, or a clean spray-down of several enemies BY HIM.\n"
+    "READING THE KILL FEED (top-right) — WHO actually got the kill (do not get this wrong):\n"
+    "- Each row is 'KILLER  [weapon icon]  VICTIM' — killer on the LEFT, victim on the RIGHT.\n"
+    "- The STREAMER'S OWN kills are marked with a RED outline/box on that row. That red mark is "
+    "the ONLY reliable sign HE got the kill. Rows with NO red outline are kills by his teammates "
+    "or enemies — NOT him. So when the team wipes the enemy, only the RED rows are the "
+    "streamer's; if few or none are red, HE did not do it. NEVER credit the streamer with kills "
+    "that aren't red — don't say 'I aced' / 'I killed them all' when his team got the kills.\n"
+    "- ASSISTS: a row written 'KILLER + ASSISTER  [weapon]  VICTIM' means the name after the "
+    "'+' only ASSISTED (chip damage or a flash) — an assist is NOT a kill. If the streamer is "
+    "the assister, he did NOT get that kill. Count a kill for him only when he is the KILLER "
+    "(left side) on a RED row, never from the '+assist' slot and never from a teammate's row.\n"
+    "MULTI-KILL RULE (be strict): a kill streak counts as a clip-worthy 'multikill'/'ace' only "
+    "from the STREAMER'S OWN kills (his RED rows, as killer, excluding assists): at least 4 of "
+    "HIS kills — EXCEPT with the Desert Eagle (Deagle), where 3+ of his kills is enough (a "
+    "3-Deagle string is impressive). A team wipe where he personally got only 1-3 is NOT his "
+    "ace/multikill. A 2-3 kill streak with rifles/SMGs/AWP is routine and NOT clip-worthy on "
+    "its own; only clip it if a genuine reaction or funny moment carries it.\n\n"
     "What makes a great clip here (Renyan-style, comedy/personality FIRST): genuine funny or "
     "relatable moments; meltdowns and rage at toxic or uncooperative teammates and 'the state "
     "of the game'; calling out or outplaying obvious cheaters/hackers; self-handicap or "
@@ -130,18 +132,25 @@ _SYSTEM = (
     "- clipworthy: true only if genuinely worth posting (apply the rules above).\n"
     "- score: 0..1 confidence it performs as a Short.\n"
     "- kind: best-fitting label.\n"
-    "- title: write an ORIGINAL, scroll-stopping title for THIS specific clip. (a) Same "
-    "LANGUAGE the streamer speaks — Russian dialogue -> Russian title, English -> English. "
-    "(b) It must describe what ACTUALLY happens or is said in this exact clip (the specific "
-    "play, line or moment) — never a generic, reusable template. (c) Do NOT copy another "
-    "creator's catchphrases or recycled meme formats. Specifically AVOID stock openers like "
-    "'POV:', 'NAH CHAT', 'WHEN YOUR TEAM...', 'X BUT Y', 'THANK YOU SHERLOCK' and similar "
-    "borrowed phrasings — write it FRESH in the streamer's own voice, ideally drawing on his "
-    "actual words from the clip. (d) Short and punchy; a little curiosity is good but don't "
-    "lean on '...'. (e) No hashtags, no quotes, at most one emoji; use a real map/player name "
-    "only if you're sure, and never invent drama that isn't there.\n"
-    "- hook: a punchy 2-4 word on-screen opener in the SAME LANGUAGE as the title, in the "
-    "streamer's own words (UPPERCASE ok), or empty.\n"
+    "- title: write an ORIGINAL, scroll-stopping title for THIS specific clip. (a) ALWAYS in "
+    "RUSSIAN — write the title in Russian even when he speaks English in the clip (translate / "
+    "render the idea naturally in Russian). (b) It must describe what ACTUALLY happens or is "
+    "said in this exact clip (the specific play, line or moment) — never a generic, reusable "
+    "template. (c) Do NOT copy another creator's catchphrases or recycled meme formats. "
+    "Specifically AVOID stock openers like 'POV:', 'NAH CHAT', 'WHEN YOUR TEAM...', 'X BUT Y', "
+    "'THANK YOU SHERLOCK' and similar borrowed phrasings — write it FRESH in the streamer's own "
+    "voice, ideally drawing on his actual words from the clip. (d) It must read like a natural "
+    "Russian phrase a person would actually SAY — not a dry mechanical label or a weapon+stat "
+    "mash-up. BAD: 'butterfly ace' / 'бабочка эйс' (a flat tag, no hook). GOOD (his style — "
+    "punchy, reaction-led, often a two-beat setup -> payoff): "
+    "'Я убил их всех... Этот тип — умственно отсталый...'. Build the title from his reaction or "
+    "what makes the moment funny/impressive, in his own blunt, toxic-comedy, self-deprecating "
+    "voice. (e) Short and punchy; a two-beat 'setup... payoff' with an ellipsis is welcome when "
+    "it fits the joke — just don't pad with empty '...'. (f) No hashtags, "
+    "no quotes, at most one emoji; use a real map/player name only if you're sure, and never "
+    "invent drama that isn't there.\n"
+    "- hook: a punchy 2-4 word on-screen opener in RUSSIAN, in the streamer's own words "
+    "(UPPERCASE ok), or empty.\n"
     "- description: one sentence on what literally happens.\n"
     "- reason: one sentence on why it will or won't work.\n"
     "- clip_start, clip_end: absolute seconds (from the frame timestamps) bounding the "
@@ -160,8 +169,6 @@ class VisionVerdict:
     reason: str
     clip_start: float       # absolute seconds (the AI-chosen tight cut)
     clip_end: float
-    sfx: str = ""           # chosen sound-effect name (or "" for none)
-    sfx_time: float = 0.0   # absolute seconds where the SFX should hit
     music: str = ""         # chosen background mood: '', 'calm', or 'hype'
     layout: str = "facecam" # 'facecam' (cam on top) or 'gameplay' (no cam, blurred backdrop)
 
@@ -213,15 +220,6 @@ def analyze_clip(vod_path: str, start: float, end: float, *, frames: int = 8,
         f"high number does not rescue mild, generic complaining — judge the content too.)"
         if audio_level and audio_level >= 1.5 else ""
     )
-    sfx_names = _sfx_names()
-    sfx_note = (
-        f"\n\nOPTIONAL SOUND EFFECT: you may add ONE meme sound to punctuate the clip, but "
-        f"ONLY if it genuinely fits (e.g. 'vine-boom' on a punchline, a fail sound on a whiff, "
-        f"'metal-pipe-clang' on a death). Most clips need NONE — default to 'none'. If you pick "
-        f"one, set sfx to its EXACT name and sfx_time to the absolute second (same scale as "
-        f"clip_start) where it should hit. Available sounds: {', '.join(sfx_names)}."
-        if sfx_names else ""
-    )
     music_on = bool(CONFIG.get("music", {}).get("enabled", True))
     music_note = (
         "\n\nBACKGROUND MUSIC: pick a music mood for this clip. 'calm' = boring / low-action / "
@@ -239,15 +237,20 @@ def analyze_clip(vod_path: str, start: float, end: float, *, frames: int = 8,
         "multikill, an insane or lucky shot). Pick 'gameplay' only for genuinely "
         "gameplay-driven highlights; otherwise 'facecam'."
     )
+    ign = str(CONFIG.get("streamer", {}).get("ign", "") or "").strip()
+    ign_note = (
+        f"\n\nThe STREAMER's in-game name is \"{ign}\". In the kill feed his OWN kills show "
+        f"\"{ign}\" as the killer (left side) and carry the red outline — use BOTH the name and "
+        f"the red outline to tell HIS kills apart from his teammates'. Only credit \"{ign}\" "
+        f"with kills/aces/multikills that are actually his."
+        if ign else ""
+    )
     user = (
         f"These {len(imgs)} frames span {start:.0f}s to {end:.0f}s of the stream, in order "
         f"({labels}). Judge whether this is a clipworthy CS2 Short and pick the tight 15-45s "
-        f"cut using those timestamps.{talk}{audio_note}{sfx_note}{music_note}{layout_note}"
+        f"cut using those timestamps.{ign_note}{talk}{audio_note}{music_note}{layout_note}"
     )
     extra_props: dict = {"layout": {"type": "string", "enum": ["facecam", "gameplay"]}}
-    if sfx_names:
-        extra_props["sfx"] = {"type": "string", "enum": sfx_names + ["none"]}
-        extra_props["sfx_time"] = {"type": "number"}
     if music_on:
         extra_props["music"] = {"type": "string", "enum": ["calm", "hype", "none"]}
     schema = _SCHEMA
@@ -273,10 +276,6 @@ def analyze_clip(vod_path: str, start: float, end: float, *, frames: int = 8,
     if ce - cs > max_len:
         ce = cs + max_len
 
-    sfx = str(r.get("sfx", "") or "").strip()
-    if sfx.lower() == "none" or sfx not in sfx_names:   # guard against junk / 'none'
-        sfx = ""
-    sfx_time = float(r.get("sfx_time", 0.0) or 0.0)
     music = str(r.get("music", "") or "").strip().lower()
     if music not in ("calm", "hype"):
         music = ""
@@ -294,8 +293,6 @@ def analyze_clip(vod_path: str, start: float, end: float, *, frames: int = 8,
         reason=str(r.get("reason", "")).strip(),
         clip_start=round(cs, 2),
         clip_end=round(ce, 2),
-        sfx=sfx,
-        sfx_time=round(sfx_time, 2),
         music=music,
         layout=layout,
     )

@@ -8,6 +8,7 @@ from __future__ import annotations
 import traceback
 
 from .. import store
+from ..store import JobCancelled
 from ..config import CONFIG
 from ..editplan import default_plan
 from ..models import JobStatus, ClipStatus
@@ -21,14 +22,9 @@ from . import killfeed as killfeed_stage
 from . import facecam as facecam_stage
 
 
-class JobCancelled(Exception):
-    """Raised inside run_job when the user kills the job mid-run."""
-
-
 def _ck(job_id: str) -> None:
     """Cancellation checkpoint — raise if the user asked to stop this job."""
-    if store.is_cancelled(job_id):
-        raise JobCancelled()
+    store.raise_if_cancelled(job_id)
 
 
 _GAMEPLAY_KINDS = {"ace", "clutch", "multikill", "insane_play", "multikill_deagle"}
@@ -127,13 +123,16 @@ def run_job(job_id: str) -> None:
             store.save_clip(c)
         _ck(job_id)
 
-        # detect the streamer's webcam once so every clip uses the same cam box
+        # Locate the streamer's webcam. Detect it VOD-wide as a fallback, then PER CLIP —
+        # a clip's cam can sit somewhere different (compilations / multi-POV edits change
+        # layout between segments), and a clip with no live cam should use the no-cam layout.
         edit_cfg = dict(CONFIG["edit"])
+        per_clip_cam = bool(edit_cfg.get("facecam_per_clip", True))
+        vod_cam = None
         try:
-            det = facecam_stage.detect_facecam(job.vod_path)
-            if det:
-                edit_cfg["facecam"] = {**(edit_cfg.get("facecam") or {}), **det}
-                print(f"[facecam] detected {det.get('corner')} {det}")
+            vod_cam = facecam_stage.detect_facecam(job.vod_path)
+            if vod_cam:
+                print(f"[facecam] VOD-wide {vod_cam.get('corner')} {vod_cam}")
         except Exception as e:
             print(f"[facecam] detection failed: {e}")
 
@@ -142,8 +141,23 @@ def run_job(job_id: str) -> None:
         store.save_job(job)
         for c in clips:
             _ck(job_id)
+            cfg_c = dict(edit_cfg)
+            if getattr(c, "layout", "facecam") != "gameplay":
+                cam = None
+                if per_clip_cam:
+                    try:
+                        cam = facecam_stage.detect_facecam(job.vod_path, start_s=c.start, end_s=c.end)
+                    except Exception as e:
+                        print(f"[facecam] clip {c.id} detection failed: {e}")
+                cam = cam or vod_cam
+                if cam:
+                    cfg_c["facecam"] = {**(cfg_c.get("facecam") or {}), **cam}
+                    print(f"[facecam] clip {c.start:.0f}-{c.end:.0f}s -> {cam.get('corner')}")
+                else:
+                    c.layout = "gameplay"   # no live cam in this clip -> no-cam layout
+                    print(f"[facecam] clip {c.start:.0f}-{c.end:.0f}s -> no live cam, using gameplay layout")
             try:
-                plan = default_plan(job.vod_path, c, edit_cfg)
+                plan = default_plan(job.vod_path, c, cfg_c)
                 out = render_stage.render(plan, c.id, transcript_path=job.transcript_path)
                 c.file_path = str(out)
                 c.edit_plan = plan.model_dump()

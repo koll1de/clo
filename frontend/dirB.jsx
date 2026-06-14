@@ -11,6 +11,9 @@ function DirB(){
   // clips we've already skipped/exported this session — kept out of the grid so the
   // 3s poll can't briefly re-add one before the server agrees it's no longer pending.
   const acted = useRef(new Set());
+  // a finished job whose clips we're browsing in the viewer modal (all statuses), and its clips
+  const [openJob, setOpenJob] = useState(null);
+  const [jobClips, setJobClips] = useState([]);
 
   // Pull the live state: all jobs, plus pending clips across every job, by viral score.
   const refresh = async () => {
@@ -63,12 +66,58 @@ function DirB(){
     refresh();
   };
 
-  // SKIP -> reject, EXPORT -> approve. Optimistically drop the card, then sync.
-  const act = async (c, action) => {
-    acted.current.add(c.id);
-    setClips(x => x.filter(y => y.id !== c.id));
-    try { await (action === 'approve' ? API.approve(c.id) : API.reject(c.id)); } catch (e) {}
+  // optimistically pull a card from the grid (the 3s poll re-syncs from the server)
+  const drop = (id) => { acted.current.add(id); setClips(x => x.filter(y => y.id !== id)); };
+
+  // SKIP -> reject (discard the clip)
+  const skip = async (c) => { drop(c.id); try { await API.reject(c.id); } catch (e) {} refresh(); };
+
+  // EXPORT -> download the finished .mp4 to disk, then mark it approved (leaves the queue)
+  const exportClip = async (c) => {
+    if (!c.file_path) { alert('This clip is still rendering — try again in a moment.'); return; }
+    const a = document.createElement('a');
+    a.href = API.clipUrl(c.id); a.download = `clip-${c.id}.mp4`;
+    document.body.appendChild(a); a.click(); a.remove();
+    drop(c.id); try { await API.approve(c.id); } catch (e) {} refresh();
+  };
+
+  // POST -> publish straight to the enabled platform(s) (YouTube Shorts / TikTok)
+  const post = async (c) => {
+    if (!c.file_path) { alert('This clip is still rendering — try again in a moment.'); return; }
+    try {
+      const r = await API.publish(c.id);
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        alert("Can't post yet: " + (j.detail || 'no publishing platform is enabled') +
+              '\n\nEnable youtube/tiktok in config.yaml and follow SETUP_PUBLISHING.md, then try again.');
+        return;  // keep the card so they can retry after configuring a platform
+      }
+      drop(c.id);
+    } catch (e) { alert('Post failed: ' + e); return; }
     refresh();
+  };
+
+  // delete a whole run (its clips, work files and the downloaded VOD)
+  const delJob = async (job) => {
+    const name = (job.source || '').split(/[\\/]/).pop() || job.id;
+    if (!window.confirm(`Delete this run and all its clips?\n\n${name}`)) return;
+    if (openJob && openJob.id === job.id) setOpenJob(null);
+    try { await API.delJob(job.id); } catch (e) {}
+    refresh();
+  };
+
+  // open the viewer for a run and load ALL its clips (any status) so old jobs are browsable
+  const viewJob = async (job) => {
+    setOpenJob(job); setJobClips([]);
+    try { setJobClips(await API.clips(job.id)); } catch (e) { setJobClips([]); }
+  };
+
+  // download a clip's .mp4 without changing its status (for browsing old clips)
+  const download = (c) => {
+    if (!c.file_path) { alert('This clip has no rendered file.'); return; }
+    const a = document.createElement('a');
+    a.href = API.clipUrl(c.id); a.download = `clip-${c.id}.mp4`;
+    document.body.appendChild(a); a.click(); a.remove();
   };
 
   const vodHrs = (jobs.reduce((s,j) => s + (j.duration || 0), 0) / 3600).toFixed(1);
@@ -168,17 +217,94 @@ function DirB(){
                   <div style={{ fontSize:13, fontWeight:600, lineHeight:1.25, textWrap:'pretty' }}>{c.title || '(untitled)'}</div>
                   <ScoreRing value={Math.round((c.score||0)*100)} size={40} />
                 </div>
-                <div style={{ display:'flex', gap:8, marginTop:13 }}>
-                  <button className="btn" style={{ flex:1, padding:'8px', fontSize:10, justifyContent:'center' }}
-                    onClick={()=>act(c,'reject')}>SKIP</button>
-                  <button className="btn pri" style={{ flex:1, padding:'8px', fontSize:10, justifyContent:'center' }}
-                    onClick={()=>act(c,'approve')}>EXPORT</button>
+                <div style={{ display:'flex', gap:6, marginTop:13 }}>
+                  <button className="btn" style={{ flex:1, padding:'8px 4px', fontSize:9, justifyContent:'center' }}
+                    onClick={()=>skip(c)}>SKIP</button>
+                  <button className="btn" style={{ flex:1, padding:'8px 4px', fontSize:9, justifyContent:'center' }}
+                    onClick={()=>exportClip(c)} title="Download the finished .mp4">⤓ EXPORT</button>
+                  <button className="btn pri" style={{ flex:1, padding:'8px 4px', fontSize:9, justifyContent:'center' }}
+                    onClick={()=>post(c)} title="Publish to YouTube/TikTok">POST</button>
                 </div>
               </div>
             </div>
           ))}
         </div>
       </section>
+
+      {/* runs — every VOD job, with delete (the UI used to show only the latest) */}
+      {jobs.length > 0 && (
+        <section style={{ maxWidth:1180, margin:'0 auto', padding:'0 44px 90px', position:'relative', zIndex:3 }}>
+          <div style={{ display:'flex', alignItems:'baseline', justifyContent:'space-between', marginBottom:18 }}>
+            <h2 className="disp" style={{ fontSize:32 }}>Runs <span style={{ color:'var(--faint)' }}>/ {jobs.length}</span></h2>
+            <span className="ovl">CLICK A RUN TO VIEW ITS CLIPS · ✕ TO DELETE</span>
+          </div>
+          <div className="panel">
+            {jobs.slice().sort((a,b)=>(b.created_at||0)-(a.created_at||0)).map((j,idx)=>{
+              const name = (j.source || '').split(/[\\/]/).pop() || j.id;
+              const st = STAGE[j.status];
+              const cls = j.status==='ready' ? 'ok' : st ? 'run' : 'q';
+              return (
+                <div key={j.id} onClick={()=>viewJob(j)} title="View this run's clips"
+                  style={{ display:'flex', alignItems:'center', gap:14, padding:'11px 16px', cursor:'pointer',
+                  borderTop: idx===0 ? 'none' : '1px solid var(--line)' }}>
+                  <span className={`chip ${cls}`} style={{ minWidth:104, justifyContent:'center' }}>
+                    <span className="dot" />{st ? st.label : j.status}
+                  </span>
+                  <span style={{ flex:1, fontSize:13, fontWeight:600, overflow:'hidden',
+                    textOverflow:'ellipsis', whiteSpace:'nowrap' }} title={j.source}>{name}</span>
+                  <span className="mono" style={{ fontSize:11, color:'var(--faint)', whiteSpace:'nowrap' }}>
+                    {j.duration ? fmtDur(j.duration) : '—'}
+                  </span>
+                  <span className="mono" style={{ fontSize:10, color:'var(--acc)', letterSpacing:'.12em' }}>VIEW ▸</span>
+                  <button className="btn x" title="Delete this run + its clips"
+                    onClick={(e)=>{ e.stopPropagation(); delJob(j); }}>✕</button>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* clip viewer — browse ALL clips of any run (any status), watch + download/post */}
+      {openJob && (
+        <div onClick={()=>setOpenJob(null)} style={{ position:'fixed', inset:0, zIndex:50,
+          background:'rgba(4,4,5,.86)', overflowY:'auto', padding:'40px 0' }}>
+          <div onClick={e=>e.stopPropagation()} style={{ maxWidth:1180, width:'100%', margin:'0 auto', padding:'0 44px' }}>
+            <div style={{ display:'flex', alignItems:'baseline', justifyContent:'space-between', marginBottom:20 }}>
+              <h2 className="disp" style={{ fontSize:28 }}>
+                {(openJob.source || '').split(/[\\/]/).pop() || openJob.id}
+                <span style={{ color:'var(--faint)' }}> / {jobClips.length} clips</span>
+              </h2>
+              <button className="btn ghost" onClick={()=>setOpenJob(null)}>✕ CLOSE</button>
+            </div>
+            {jobClips.length === 0 ? (
+              <div className="mono" style={{ color:'var(--muted)', padding:'40px 0', textAlign:'center' }}>
+                No clips for this run.
+              </div>
+            ) : (
+              <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:16, paddingBottom:40 }}>
+                {jobClips.slice().sort((a,b)=>(b.score||0)-(a.score||0)).map(c=>(
+                  <div key={c.id} className="panel" style={{ position:'relative' }}>
+                    <ClipThumb clip={{ ...c, t: fmtClock(c.start), dur: fmtDur(c.end - c.start) }} h={300} />
+                    <div style={{ padding:'12px 13px 14px' }}>
+                      <div style={{ display:'flex', justifyContent:'space-between', gap:8, alignItems:'center' }}>
+                        <div style={{ fontSize:12.5, fontWeight:600, lineHeight:1.25, textWrap:'pretty' }}>{c.title || '(untitled)'}</div>
+                        <span className="chip" style={{ fontSize:8.5, padding:'3px 7px' }}>{c.status}</span>
+                      </div>
+                      <div style={{ display:'flex', gap:6, marginTop:11 }}>
+                        <button className="btn" style={{ flex:1, padding:'8px 4px', fontSize:9, justifyContent:'center' }}
+                          onClick={()=>download(c)} title="Download the .mp4">⤓ SAVE</button>
+                        <button className="btn pri" style={{ flex:1, padding:'8px 4px', fontSize:9, justifyContent:'center' }}
+                          onClick={()=>post(c)} title="Publish to YouTube/TikTok">POST</button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

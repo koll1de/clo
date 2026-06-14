@@ -15,11 +15,25 @@ from pydantic import BaseModel, Field
 from .config import CONFIG, ROOT
 
 WIN_FONTS = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
-ASSET_FONTS = ROOT / "assets" / "fonts"   # bundled fonts (e.g. Nata Sans) that ship with the app
+ASSET_FONTS = ROOT / "assets" / "fonts"   # bundled fonts (Nata Sans) that ship with the app
+
+# The bundled, OFL-licensed, Cyrillic-capable family shipped in assets/fonts (instanced
+# from the Nata Sans variable font). Every render falls back to this when a requested
+# font is missing, so the app is self-contained and never silently renders tofu/the
+# wrong face for Russian text on a machine that lacks a given system font.
+FALLBACK_FONT = "Nata Sans"
 
 # Friendly name -> (file, family libass expects, asset=True if it lives in assets/fonts).
+# Each Nata Sans weight is its OWN family name so the ASS Fontname field selects the exact
+# face under libass (which keys on family name, not the OS/2 weight class) on Windows.
 FONTS: dict[str, dict] = {
-    "Nata Sans SemiBold": {"file": "NataSans-SemiBold.ttf", "family": "Nata Sans SemiBold", "asset": True},  # bundled, Cyrillic-capable
+    # --- bundled: ship with the app, render identically on any machine ---
+    "Nata Sans":           {"file": "NataSans-Regular.ttf",   "family": "Nata Sans",           "asset": True},
+    "Nata Sans Medium":    {"file": "NataSans-Medium.ttf",    "family": "Nata Sans Medium",    "asset": True},
+    "Nata Sans SemiBold":  {"file": "NataSans-SemiBold.ttf",  "family": "Nata Sans SemiBold",  "asset": True},
+    "Nata Sans Bold":      {"file": "NataSans-Bold.ttf",      "family": "Nata Sans Bold",      "asset": True},
+    "Nata Sans ExtraBold": {"file": "NataSans-ExtraBold.ttf", "family": "Nata Sans ExtraBold", "asset": True},
+    # --- optional system fonts: selectable for variety, NOT bundled (Windows only) ---
     "Bahnschrift": {"file": "bahnschrift.ttf", "family": "Bahnschrift"},  # modern condensed, Cyrillic
     "Segoe Black": {"file": "seguibl.ttf", "family": "Segoe UI Black"},
     "Arial Black": {"file": "ariblk.ttf", "family": "Arial Black"},
@@ -29,14 +43,32 @@ FONTS: dict[str, dict] = {
 }
 
 
-def font_file(name: str) -> Path:
-    entry = FONTS.get(name, FONTS["Segoe Black"])
+def _font_path(entry: dict) -> Path:
     base = ASSET_FONTS if entry.get("asset") else WIN_FONTS
     return base / entry["file"]
 
 
+def _resolve(name: str) -> dict:
+    """The font entry to actually use: the requested one if its file exists on this
+    machine, otherwise the bundled Cyrillic fallback. font_file() and font_family() both
+    go through here so the staged file and the ASS Fontname stay in lockstep — a missing
+    system font can never leave libass with a family name it has no file for."""
+    entry = FONTS.get(name)
+    if entry is not None and _font_path(entry).exists():
+        return entry
+    if entry is None:
+        print(f"[font] {name!r} not in registry; using bundled {FALLBACK_FONT!r}")
+    else:
+        print(f"[font] {name!r} file missing ({_font_path(entry)}); using bundled {FALLBACK_FONT!r}")
+    return FONTS[FALLBACK_FONT]
+
+
+def font_file(name: str) -> Path:
+    return _font_path(_resolve(name))
+
+
 def font_family(name: str) -> str:
-    return FONTS.get(name, FONTS["Segoe Black"])["family"]
+    return _resolve(name)["family"]
 
 
 def _has_cyrillic(text: str) -> bool:
@@ -45,10 +77,10 @@ def _has_cyrillic(text: str) -> bool:
 
 def cyrillic_safe_font(name: str, text: str) -> str:
     """Impact (and other Latin-only faces) can't render Russian. If the text has Cyrillic,
-    fall back to a heavy Cyrillic-capable font so the title actually shows."""
+    fall back to a heavy bundled Cyrillic-capable face so the title actually shows."""
     latin_only = {"Impact"}
     if name in latin_only and _has_cyrillic(text):
-        return "Arial Black"
+        return "Nata Sans ExtraBold"   # bundled, heavy, full Cyrillic
     return name
 
 
@@ -69,11 +101,13 @@ class Reframe(BaseModel):
     zoom: float = 1.0          # 1.0 = just covers the frame; >1 zooms further in
     x_center: float = 0.5      # horizontal crop center (0=left, 1=right)
     y_center: float = 0.5      # vertical crop center for the gameplay region
+    gameplay_mid: float = 0.5  # gameplay_blur: share of the clip height the SHARP gameplay band
+                               # takes (bigger = more zoomed-in gameplay, smaller blur bands)
 
 
 class Captions(BaseModel):
     enabled: bool = True
-    font: str = "Segoe Black"
+    font: str = "Nata Sans Medium"   # bundled, Cyrillic-capable (no system font needed)
     size: int = 74
     primary: str = "#FFFFFF"   # text color
     outline_color: str = "#000000"
@@ -118,8 +152,25 @@ class Music(BaseModel):
     duck_ratio: float = 12.0   # how hard it ducks when his voice is loud
 
 
+class Subscribe(BaseModel):
+    """A subscribe-animation overlay (.mov with alpha + audio) dropped onto every clip,
+    under the watermark, a couple seconds in."""
+    enabled: bool = False
+    file: str = ""             # absolute path to the animation (.mov with alpha)
+    volume: float = 0.5        # its audio level (0..1)
+    start: float = 2.5         # clip-relative seconds before it appears
+    scale: float = 0.6         # cropped-content width as a fraction of the clip width
+    gap: int = 24              # px gap below the watermark
+    # Content crop (fractions of the source) — many subscribe .movs put a small button in a big
+    # transparent canvas; crop to the button so it isn't scaled down to nothing. Full = 0,0,1,1.
+    crop_x: float = 0.31
+    crop_y: float = 0.49
+    crop_w: float = 0.38
+    crop_h: float = 0.43
+
+
 class Effect(BaseModel):
-    type: Literal["zoom", "speed", "sfx"]
+    type: Literal["zoom", "speed"]
     t0: float                  # clip-relative seconds
     t1: float = 0.0
     params: dict = Field(default_factory=dict)
@@ -139,6 +190,7 @@ class EditPlan(BaseModel):
     question_card: QuestionCard = Field(default_factory=QuestionCard)
     watermark: Watermark = Field(default_factory=Watermark)
     music: Music = Field(default_factory=Music)
+    subscribe: Subscribe = Field(default_factory=Subscribe)
     effects: list[Effect] = Field(default_factory=list)
 
 
@@ -147,8 +199,9 @@ def default_plan(source: str, clip, edit_cfg: dict) -> EditPlan:
     plan = EditPlan(source=source, start=clip.start, end=clip.end)
     plan.reframe.mode = edit_cfg.get("reframe_mode", "fill_crop")
     plan.reframe.zoom = float(edit_cfg.get("reframe_zoom", 1.0))
+    plan.reframe.gameplay_mid = float(edit_cfg.get("gameplay_mid", 0.5))
     plan.captions.enabled = bool(edit_cfg.get("subtitles", False))
-    plan.captions.font = edit_cfg.get("subtitle_font", "Bahnschrift")
+    plan.captions.font = edit_cfg.get("subtitle_font", "Nata Sans Medium")
     plan.intro_hook.enabled = bool(edit_cfg.get("intro_hook", True))
     plan.intro_hook.text = (getattr(clip, "hook", "") or clip.title or "")
     plan.intro_hook.persist = bool(edit_cfg.get("hook_persist", True))
@@ -200,30 +253,44 @@ def default_plan(source: str, clip, edit_cfg: dict) -> EditPlan:
             scale=float(wcfg.get("scale", 0.30)),
         )
 
-    # Sound effect the vision gate chose for this clip (renderer mixes it over the audio).
-    sfx_name = (getattr(clip, "sfx", "") or "").strip()
-    if edit_cfg.get("sound_effects", True) and sfx_name:
-        scfg = CONFIG.get("sfx", {})
-        sfx_path = ROOT / scfg.get("dir", "assets/sfx") / f"{sfx_name}.mp3"
-        if sfx_path.exists():
-            # sfx_time is absolute source seconds; make it clip-relative and keep it in-bounds
-            t0 = max(0.0, float(getattr(clip, "sfx_time", 0.0)) - clip.start)
-            t0 = min(t0, max(0.0, (clip.end - clip.start) - 0.2))
-            plan.effects.append(Effect(
-                type="sfx", t0=round(t0, 2),
-                params={"file": str(sfx_path), "volume": float(scfg.get("volume", 0.8))},
-            ))
-
     # Background music bed the vision gate chose (renderer ducks it under his voice).
     mood = (getattr(clip, "music", "") or "").strip().lower()
     mcfg = CONFIG.get("music", {})
     if mcfg.get("enabled", True) and mood in ("calm", "hype"):
         track = (mcfg.get("tracks", {}) or {}).get(mood, f"{mood}.mp3")
         mpath = ROOT / mcfg.get("dir", "assets/music") / track
-        if mpath.exists():
+        # Don't lay our bed over a part where music is ALREADY playing in the source (e.g.
+        # he has a track on) — that would stack two songs. Detect it in the clip's audio.
+        already = False
+        if mcfg.get("skip_if_present", True):
+            try:
+                from .pipeline.audio import segment_has_music
+                already = segment_has_music(getattr(clip, "job_id", ""), clip.start, clip.end)
+            except Exception as e:
+                print(f"[music] source-music check skipped: {e}")
+        if mpath.exists() and not already:
             plan.music = Music(
                 enabled=True, file=str(mpath),
                 volume=float(mcfg.get("volume", 0.18)),
                 duck_ratio=float(mcfg.get("duck_ratio", 12)),
+            )
+        elif already:
+            print(f"[music] source already has music {clip.start:.0f}-{clip.end:.0f}s -> no bed")
+
+    # Subscribe-animation overlay (under the watermark, a couple seconds in).
+    scfg = CONFIG.get("subscribe", {})
+    if scfg.get("enabled", False):
+        spath = scfg.get("file", "")
+        sp = Path(spath) if os.path.isabs(spath) else (ROOT / spath)
+        if sp.exists():
+            crop = scfg.get("content_crop", {}) or {}
+            plan.subscribe = Subscribe(
+                enabled=True, file=str(sp),
+                volume=float(scfg.get("volume", 0.5)),
+                start=float(scfg.get("start", 2.5)),
+                scale=float(scfg.get("scale", 0.6)),
+                gap=int(scfg.get("gap", 24)),
+                crop_x=float(crop.get("x", 0.31)), crop_y=float(crop.get("y", 0.49)),
+                crop_w=float(crop.get("w", 0.38)), crop_h=float(crop.get("h", 0.43)),
             )
     return plan

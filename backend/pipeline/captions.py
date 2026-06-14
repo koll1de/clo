@@ -148,7 +148,12 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             an = 5
             y0 = seam - (len(wrapped) - 1) * lh // 2
         elif plan.reframe.mode == "gameplay_blur":
-            an, y0 = 8, 70               # full top, over the top blurred band (no cam)
+            # No-cam layout: title in the top blurred band, nudged DOWN from the very top edge.
+            # Uses the same band geometry as the renderer so it tracks the gameplay_mid zoom.
+            frac = min(0.72, max(0.34, plan.reframe.gameplay_mid))
+            mid_h = (round(plan.height * frac) // 2) * 2
+            top_h = ((plan.height - mid_h) // 2 // 2) * 2
+            an, y0 = 8, int(top_h * 0.30)
         else:
             an, y0 = 8, 140
         # One Dialogue per wrapped line so we control the leading (libass has no line-spacing tag).

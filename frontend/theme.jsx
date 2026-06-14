@@ -98,7 +98,10 @@ const API = {
   }),
   approve: (id) => fetch(`/api/clips/${id}/approve`, { method: 'POST' }),
   reject:  (id) => fetch(`/api/clips/${id}/reject`,  { method: 'POST' }),
+  publish: (id) => fetch(`/api/clips/${id}/publish`, { method: 'POST' }),
   cancel:  (id) => fetch(`/api/jobs/${id}/cancel`,   { method: 'POST' }),
+  delJob:  (id) => fetch(`/api/jobs/${id}`,          { method: 'DELETE' }),
+  clipUrl: (id) => `/clips/${id}.mp4`,
 };
 
 // Map a backend JobStatus onto the scanning strip's { stage label, progress % }.

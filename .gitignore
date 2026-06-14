@@ -15,11 +15,14 @@ assets/sfx/
 # Downloaded music beds (regenerate via download_music.py) — copyrighted, not committed
 assets/music/
 
-# Secrets (publishing tokens + API keys)
+# Secrets (publishing tokens + API keys + browser cookies)
 secrets/
 *.token.json
 config.local.yaml
 .env
+cookies.txt
+assets/cookies.txt
+*cookies*.txt
 
 # Local Claude Code settings (machine-specific permissions)
 .claude/settings.local.json

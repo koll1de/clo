@@ -1,8 +1,8 @@
 """Stage 4 — render an EditPlan into a finished vertical clip with ffmpeg.
 
 v1 implements: precise cut, vertical reframe (fill_crop / fit_blur), styled Russian
-captions, and the intro hook (both via one libass pass). Zoom punch-ins, speed ramps,
-sound effects, and the question-card overlay are layered on next.
+captions, and the intro hook (both via one libass pass), zoom punch-ins, a ducked
+background-music bed, and the question-card overlay.
 """
 from __future__ import annotations
 
@@ -76,12 +76,16 @@ def _gameplay_blur_filter(plan: EditPlan) -> str:
     blurred crops of the same gameplay filling the bands above and below. The top blurred
     band shows the BOTTOM of the gameplay; the bottom blurred band shows the TOP."""
     W, H = plan.width, plan.height
-    mid_h = (round(W * 9 / 16) // 2) * 2          # full 16:9 gameplay scaled to width (~608)
+    frac = min(0.72, max(0.34, plan.reframe.gameplay_mid))
+    mid_h = (round(H * frac) // 2) * 2            # SHARP gameplay band (bigger = more zoomed in)
     top_h = ((H - mid_h) // 2 // 2) * 2           # even
     bot_h = H - mid_h - top_h
-    # middle: fit the whole frame to width (no crop); pad only if the source isn't 16:9
-    mid = (f"scale={W}:{mid_h}:force_original_aspect_ratio=decrease,"
-           f"pad={W}:{mid_h}:(ow-iw)/2:(oh-ih)/2,setsar=1")
+    xc, yc = plan.reframe.x_center, plan.reframe.y_center
+    # middle: zoom to COVER the band and centre-crop so the gameplay fills it (more visible).
+    # A band taller than 16:9 crops the left/right edges (radar/side HUD) — the crosshair and
+    # central action stay centred. At frac≈0.317 this is the old full-width (no-crop) look.
+    mid = (f"scale={W}:{mid_h}:force_original_aspect_ratio=increase,"
+           f"crop={W}:{mid_h}:(in_w-{W})*{xc}:(in_h-{mid_h})*{yc},setsar=1")
     # top band: cover Wxh, keep the BOTTOM slice, blur
     top = (f"scale={W}:{top_h}:force_original_aspect_ratio=increase,"
            f"crop={W}:{top_h}:(in_w-{W})/2:(in_h-{top_h}),boxblur=28:2,setsar=1")
@@ -146,51 +150,68 @@ def render(plan: EditPlan, clip_id: str, transcript_path: str | None = None) -> 
     dur = max(0.1, plan.end - plan.start)
     W, H = plan.width, plan.height
 
-    # Sound-effect overlays: mix each onto the original audio at its t0 (only real files).
-    sfx = [e for e in plan.effects
-           if e.type == "sfx" and e.params.get("file") and Path(e.params["file"]).exists()]
     wm = plan.watermark
     wm_on = bool(wm.enabled and wm.image and Path(wm.image).exists())
     mus = plan.music
     mus_on = bool(mus.enabled and mus.file and Path(mus.file).exists())
+    sub = plan.subscribe
+    sub_on = bool(sub.enabled and sub.file and Path(sub.file).exists())
 
     # ffmpeg runs with cwd=work (so the ass=<basename> path resolves), so the source
     # must be absolute — a relative VOD path would otherwise be looked for under work/.
     source = str(Path(plan.source).resolve())
     cmd = [ffmpeg_bin(), "-y", "-ss", f"{plan.start:.3f}", "-t", f"{dur:.3f}", "-i", source]
-    for e in sfx:
-        cmd += ["-i", str(e.params["file"])]
-    wm_idx = 1 + len(sfx)
+    wm_idx = 1
     if wm_on:
         cmd += ["-i", str(Path(wm.image).resolve())]
-    mus_idx = 1 + len(sfx) + (1 if wm_on else 0)
+    mus_idx = 1 + (1 if wm_on else 0)
     if mus_on:
         cmd += ["-i", str(Path(mus.file).resolve())]
+    sub_idx = 1 + (1 if wm_on else 0) + (1 if mus_on else 0)
+    if sub_on:
+        cmd += ["-i", str(Path(sub.file).resolve())]
 
-    if sfx or wm_on or mus_on:
+    if wm_on or mus_on or sub_on:
         # ffmpeg forbids -vf alongside -filter_complex, so the video chain lives in the graph.
         fc = []
-        # ---- video chain (+ optional watermark overlay) ----
+        # The watermark sits midway between the crosshair (centre of the gameplay) and the
+        # bottom; the crosshair is mid-screen normally, or below the cam band in facecam mode.
+        if plan.reframe.mode == "facecam_top" and plan.facecam.present:
+            top_h = round(H * min(0.7, max(0.15, plan.facecam.band)))
+            cross = (top_h + H) / 2.0
+        else:
+            cross = H / 2.0
+        wy = (cross + H) / 2.0                      # watermark centre y
+
+        # ---- video chain: reframe -> watermark -> subscribe animation ----
+        fc.append(f"[0:v]{vf}[v0]")
+        vcur = "[v0]"
+        wm_box_h = 0.0
         if wm_on:
             ww = max(2, int(W * max(0.05, min(0.9, wm.scale))))
             op = max(0.0, min(1.0, wm.opacity))
-            # Place the watermark midway between the crosshair (centre of the gameplay) and
-            # the bottom edge, horizontally centred. The crosshair sits at the centre of the
-            # gameplay region: mid-screen normally, or below the cam band in the facecam layout.
-            if plan.reframe.mode == "facecam_top" and plan.facecam.present:
-                top_h = round(H * min(0.7, max(0.15, plan.facecam.band)))
-                cross = (top_h + H) / 2.0
-            else:
-                cross = H / 2.0
-            wy = (cross + H) / 2.0                 # halfway from the crosshair to the bottom
-            oy = f"{wy:.0f}-h/2"
-            fc.append(f"[0:v]{vf}[vbase]")
+            wm_box_h = float(ww)                    # watermark.png is square -> box is ww x ww
             fc.append(f"[{wm_idx}:v]scale={ww}:-1,format=rgba,colorchannelmixer=aa={op}[wm]")
-            fc.append(f"[vbase][wm]overlay=(W-w)/2:{oy}[vout]")
-        else:
-            fc.append(f"[0:v]{vf}[vout]")
+            fc.append(f"{vcur}[wm]overlay=(W-w)/2:{wy:.0f}-h/2[vw]")
+            vcur = "[vw]"
+        if sub_on:
+            sw = max(2, int(W * max(0.1, min(1.5, sub.scale))))
+            sstart = max(0.0, float(sub.start))
+            suby = int(wy + wm_box_h / 2.0 + max(0, sub.gap))   # just below the watermark box
+            # Crop to the button content first (the .mov is a small button in a big transparent
+            # canvas), then scale. Time-shift so the animation BEGINS (frame 0) at `start`,
+            # overlay with alpha, clamp y so it can't run off the bottom; eof_action=pass lets
+            # the clip continue after the ~4s animation ends.
+            cx, cy, cw, ch = sub.crop_x, sub.crop_y, sub.crop_w, sub.crop_h
+            cropf = (f"crop=in_w*{cw:.4f}:in_h*{ch:.4f}:in_w*{cx:.4f}:in_h*{cy:.4f},"
+                     if (cw < 0.999 or ch < 0.999 or cx > 0.001 or cy > 0.001) else "")
+            fc.append(f"[{sub_idx}:v]{cropf}scale={sw}:-1,format=rgba,setpts=PTS-STARTPTS+{sstart:.3f}/TB[sub]")
+            fc.append(f"{vcur}[sub]overlay=x=(W-w)/2:y='min({suby},main_h-overlay_h-8)':"
+                      f"enable='gte(t,{sstart:.3f})':eof_action=pass[vsub]")
+            vcur = "[vsub]"
+        vmap = vcur
 
-        # ---- audio chain: voice (+ ducked music bed) (+ sfx) ----
+        # ---- audio chain: voice (+ ducked music bed) (+ subscribe sound) ----
         mix: list[str] = []
         if mus_on:
             # split the voice: one copy to keep, one as the sidechain KEY that ducks the music
@@ -205,11 +226,11 @@ def render(plan: EditPlan, clip_id: str, transcript_path: str | None = None) -> 
             mix += ["[amain]", "[musd]"]
         else:
             mix.append("[0:a]")
-        for i, e in enumerate(sfx, start=1):
-            delay = int(max(0.0, e.t0) * 1000)
-            vol = float(e.params.get("volume", 1.0))
-            fc.append(f"[{i}:a]adelay={delay}|{delay},volume={vol}[s{i}]")
-            mix.append(f"[s{i}]")
+        if sub_on:
+            sms = int(max(0.0, float(sub.start)) * 1000)
+            svol = max(0.0, min(1.0, sub.volume))    # the animation's own sound, at 50% by default
+            fc.append(f"[{sub_idx}:a]adelay={sms}|{sms},volume={svol}[subaud]")
+            mix.append("[subaud]")
 
         if len(mix) == 1:
             amap = "0:a"                        # just the original voice — map the input stream
@@ -219,7 +240,7 @@ def render(plan: EditPlan, clip_id: str, transcript_path: str | None = None) -> 
                       f"duration=first:dropout_transition=0[amx]")
             fc.append("[amx]alimiter=limit=0.95[aout]")
             amap = "[aout]"
-        cmd += ["-filter_complex", ";".join(fc), "-map", "[vout]", "-map", amap, "-r", str(plan.fps)]
+        cmd += ["-filter_complex", ";".join(fc), "-map", vmap, "-map", amap, "-r", str(plan.fps)]
     else:
         cmd += ["-vf", vf, "-r", str(plan.fps)]
 

@@ -127,13 +127,20 @@ secrets/                    git-ignored: client_secret.json, *_token.json
 The big Phase 2 items are now **built** (see §4). What remains is mostly **tuning on the
 user's own footage** and a few smaller features:
 
-1. **Tune kill-feed detection on his real HUD** — the scaffold (`killfeed.py`) works but is
-   untuned. Steps: get a full-res VOD → screenshot his kill feed → set `signals.killfeed.roi`
-   to the feed region → figure out the colour CS2 uses to highlight **his own** kills (so we
-   clip his aces, not the enemy's) → drop weapon-icon PNGs (esp. deagle) in
-   `data/killfeed_templates` for the template path → tune `multikill_rows`/`ace_rows` against
-   real aces → enable `signals.killfeed`. Clutch detection still needs round-state context
-   (the kill feed alone can't tell a clutch).
+1. ✅ **Kill-feed tuned on a real HUD (2026-06-14).** Calibrated on a 1080p Murzofix FACEIT
+   VOD — a THIRD-PARTY test VOD (that player's in-game name is `sss-rank-`). The actual user's
+   own CS2 in-game name is **`noobs lives matter`** (set in `config.yaml streamer.ign`). Done:
+   ROI tightened to the top-right feed box
+   `{x:0.70, y:0.06, w:0.30, h:0.26}` (excludes the centre scoreboard); the activity metric
+   was rewritten from raw brightness (which spiked on bright Nuke walls/sky — a pale wall
+   outscored a real 3-kill burst) to **coloured-text-edge density**, robust to bright surfaces;
+   added **his-own-kill detection** via CS2's red local-player highlight (`his_highlight` in
+   config) that boosts windows involving him so his aces rank above the enemy's. Verified on a
+   real combat clip: clean candidate windows, no bright-surface false spikes, his multikills on
+   top. Remaining/optional: confirm the ROI on a raw single-HUD stream VOD (the calibration VOD
+   was an edited compilation with varying layouts); the deeper weapon-icon TEMPLATE path (esp.
+   deagle strings) and clutch detection (needs round-state context) are still not built — the
+   activity proxy + vision gate covers aces/multikills for now.
 2. **Validate audio/chat thresholds on a real stream** — the demo is music-heavy 360p so its
    levels aren't representative. On his talking-heavy stream, re-check `signals.audio.factor`
    and `signals.chat.factor`.
@@ -142,9 +149,16 @@ user's own footage** and a few smaller features:
 4. **Speed ramps** — `Effect type=speed` is modelled but NOT rendered (changing playback speed
    desyncs the clip-relative ASS caption/card timing, which would need recomputing). Skipped on
    purpose; do this carefully if wanted.
-5. **Font bundling** — `editplan.FONTS` registry supports adding fonts; just drop a
-   Cyrillic-capable TTF and add an entry (Impact/Anton-style Latin-only fonts won't render
-   Russian).
+5. ✅ **Font bundling — DONE.** The full **Nata Sans** family (Regular/Medium/SemiBold/Bold/
+   ExtraBold) is now bundled in `assets/fonts/` (instanced from the OFL variable font; every
+   weight has full Cyrillic coverage, verified by a real libass render). The default caption/
+   question-card font is now `Nata Sans Medium` (was `Bahnschrift`, a non-bundled Windows font)
+   and the hook stays `Nata Sans SemiBold`, so the default render path uses **zero system fonts**.
+   `editplan._resolve()` now falls back to the bundled `Nata Sans` for any missing/unknown font,
+   keeping `font_file()` and `font_family()` in lockstep (a missing system font can never leave
+   libass with a family it has no file for → no tofu). System fonts (Bahnschrift, Impact, …) are
+   still selectable but optional. To add a weight/face: instance the VF or drop a Cyrillic-capable
+   TTF in `assets/fonts/` and add a `{"file","family","asset":True}` entry to `editplan.FONTS`.
 6. **TikTok auth helper** + real public-post path (needs TikTok app audit).
 
 ---

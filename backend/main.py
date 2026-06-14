@@ -20,6 +20,18 @@ app = FastAPI(title="Clipmaker.ai")
 FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
 
 
+@app.middleware("http")
+async def _no_cache_frontend(request, call_next):
+    """The UI is JSX transpiled in-browser; StaticFiles sends no Cache-Control, so browsers
+    keep serving a STALE theme.jsx/dirB.jsx after a code change (e.g. clicks wired to the new
+    handler do nothing). Force the frontend to always load fresh."""
+    resp = await call_next(request)
+    p = request.url.path
+    if p == "/" or p.endswith(".jsx") or p.endswith(".html") or p.endswith(".css"):
+        resp.headers["Cache-Control"] = "no-store, must-revalidate"
+    return resp
+
+
 class CreateJob(BaseModel):
     source_type: str   # "local" | "twitch"
     source: str
@@ -75,12 +87,21 @@ def _safe_unlink(p) -> None:
 
 @app.post("/api/jobs/{job_id}/cancel")
 def cancel_job(job_id: str):
-    """Kill the clipmaking for a running/queued job (cooperative — stops at the next stage)."""
+    """Stop a running/queued job. Kills any live subprocess (download/ffmpeg) at once, and
+    marks the job cancelled immediately — so a STALE job whose process died (e.g. a crash or
+    server restart left it stuck 'ingesting') is freed too, not just a live one."""
     job = store.get_job(job_id)
     if not job:
         raise HTTPException(404, "job not found")
-    store.request_cancel(job_id)
-    if job.status in (JobStatus.ready, JobStatus.error, JobStatus.cancelled):
+    store.request_cancel(job_id)   # kill a live subprocess + flag the run loops to bail
+    terminal = (JobStatus.ready, JobStatus.error, JobStatus.cancelled)
+    if job.status not in terminal:
+        # A live run also lands on 'cancelled' at its next checkpoint; setting it here gives
+        # instant UI feedback and frees a stuck job that has no process left to stop.
+        job.status = JobStatus.cancelled
+        job.error = None
+        store.save_job(job)
+    else:
         store.clear_cancel(job_id)  # nothing actually running to stop
     return {"ok": True}
 

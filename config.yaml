@@ -1,5 +1,8 @@
 # Clipmaker.ai settings. Edit freely — restart the app to apply.
 
+streamer:
+  ign: "noobs lives matter"  # your CS2 in-game name — lets the AI spot YOUR kills in the feed
+
 paths:
   data_dir: data            # vods/, clips/, work/, app.db all live here
 
@@ -11,7 +14,12 @@ ingest:
   # may need to be closed for yt-dlp to read its cookie database.
   cookies_from_browser: "brave"
   # Or point at an exported cookies.txt (Netscape format); takes precedence when set.
-  cookies_file: ""
+  # (git-ignored; export via the "Get cookies.txt LOCALLY" browser extension.)
+  cookies_file: "assets/cookies.txt"
+  # Solve YouTube's JS "n challenge" so 1080p downloads at full speed (else it's throttled
+  # to ~tens of KiB/s, or only storyboards are offered). Needs node (present) + yt-dlp's EJS
+  # solver, FETCHED+RUN from GitHub — external code, so this is opt-in. Set false to disable.
+  youtube_challenge_solver: true
 
 transcribe:
   model: large-v3           # faster-whisper model (large-v3 = best, fits in 24GB)
@@ -79,16 +87,19 @@ signals:
   killfeed:
     enabled: true             # CS2 kill-feed activity detection (candidate source; vision judges)
     sample_fps: 4.0           # frames/sec to scan (higher = more accurate, slower)
-    roi: {x: 0.60, y: 0.03, w: 0.40, h: 0.22}  # kill-feed region as fractions of the frame
-    spike_factor: 1.6         # kill-feed activity this many× the baseline = a candidate window
-    max_candidates: 14        # cap kill-feed candidate windows (the vision gate filters them)
+    # Top-right kill-feed box as fractions of the frame (excludes the top-centre scoreboard).
+    # Calibrated on his 1080p FACEIT HUD; widen `w`/lower `x` if long (assist) rows clip.
+    roi: {x: 0.70, y: 0.06, w: 0.30, h: 0.26}
+    # Activity = density of coloured kill-feed text edges (robust to bright sky/walls). Idle
+    # runs ~0.003, a kill burst ~0.04-0.10. A window counts when activity exceeds BOTH:
+    min_activity: 0.025       # absolute floor (no real feed text below this)
+    spike_factor: 4.0         # ...and this many× the per-VOD baseline median
     window_seconds: 4.0       # min gap between separate activity spikes
-
-# Sound effects the vision AI may attach to a clip (downloaded via download_sfx.py).
-sfx:
-  enabled: true             # let the AI punctuate a clip with a meme SFX when it fits
-  dir: assets/sfx           # folder of .mp3 files; delete ones you don't want the AI to use
-  volume: 0.8               # playback volume of the chosen SFX (mixed over the clip audio)
+    max_candidates: 14        # cap kill-feed candidate windows (the vision gate filters them)
+    his_highlight:            # float HIS OWN kills above kills his teammates got
+      enabled: true           # detect CS2's red outline on the local player's own kill rows
+      boost: 1.6              # multiply a window's rank score when his own (red) kills show
+      involve_floor: 0.003    # red-pixel fraction in the ROI that counts as "his own kill"
 
 # Background music bed the AI picks by mood (downloaded via download_music.py). The track
 # plays quietly UNDER the clip and auto-ducks whenever his voice gets loud (rages/hype),
@@ -96,20 +107,36 @@ sfx:
 music:
   enabled: true
   dir: assets/music
-  volume: 0.18              # background level (low — under the clip audio, but audible)
+  volume: 0.12              # background level (low — under the clip audio, but audible)
   duck_ratio: 12            # how hard the music ducks under his voice (higher = more)
+  skip_if_present: true     # if the SOURCE already has music playing in a clip, add no bed (no double music)
+  source_detect_strength: 0.32  # beat-detection threshold for "source has music" (0..1; lower = more sensitive)
   tracks:
     calm: calm.mp3          # Oblivion - Harvest Dawn
     hype: hype.mp3          # high-energy track for big plays
 
+# Subscribe-animation overlay (a .mov with alpha + sound) dropped onto every clip, under the
+# watermark, a couple seconds in. Plays once, then disappears.
+subscribe:
+  enabled: true
+  file: "assets/subscribe MOV.mov"
+  volume: 0.5               # its audio level (0..1) — 50%
+  start: 2.5                # seconds into the clip before it appears
+  scale: 0.6               # cropped-button width as a fraction of the clip width
+  gap: 24                  # px gap below the watermark
+  # The .mov has a small button inside a big transparent canvas — crop to the button so it
+  # isn't scaled to nothing (fractions of the source). Set to x:0 y:0 w:1 h:1 for no crop.
+  content_crop: {x: 0.31, y: 0.49, w: 0.38, h: 0.43}
+
 edit:
   subtitles: false          # OFF — Renyan-style clips have no running captions
-  subtitle_font: Bahnschrift # nicer modern condensed font (Cyrillic-capable); see editplan.py FONTS
+  subtitle_font: Nata Sans Medium  # bundled, self-contained (Cyrillic-OK). "Bahnschrift" = condensed system font; see editplan.py FONTS for all options
   reframe_mode: facecam_top  # facecam_top (cam on top + gameplay below), fill_crop, or fit_blur
   reframe_zoom: 1.0
+  gameplay_mid: 0.5          # no-cam layout: share of the height the SHARP gameplay takes
+                             # (bigger = more zoomed-in gameplay, thinner top/bottom blur bands)
   zoom_punch_ins: false     # no blind auto-zooms; the vision pass decides emphasis instead
   speed_ramps: true
-  sound_effects: true
   killfeed_highlights: true
   intro_hook: true
   hook_font: Nata Sans SemiBold   # on-screen title font (bundled in assets/fonts, Cyrillic-OK)
@@ -120,8 +147,10 @@ edit:
     image: assets/watermark.png   # regenerate/replace via: python make_watermark.py <nickname>
     opacity: 0.5              # 0..1
     scale: 0.30              # watermark width as a fraction of the clip width
-  # Streamer webcam location in the source (fractions of the frame). Auto-detected per
-  # job when possible; these are the fallback/defaults (Renyan = top-left).
+  # Streamer webcam: auto-detected as a LIVE face (a static photo over the radar is ignored)
+  # and located per-VOD AND per-clip (layouts can shift between segments). A clip with no live
+  # cam falls back to the no-cam gameplay layout. The rect below is only the last-resort fallback.
+  facecam_per_clip: true     # detect the cam within each clip's window (handles varied VODs)
   facecam:
     present: true
     x: 0.0

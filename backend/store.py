@@ -11,14 +11,25 @@ from .models import Job, Clip
 
 _lock = threading.Lock()
 
+class JobCancelled(Exception):
+    """Raised when the user kills a running job. Lives here (not run.py) so every stage
+    can raise/catch it without an import cycle."""
+
+
 # Cooperative cancellation: a job_id in here means "stop ASAP". The pipeline checks this
-# at stage boundaries (and inside the vision loop). Lives here so run.py and moments.py can
-# both read it without an import cycle.
+# at stage boundaries, inside the vision/transcribe loops, and while subprocesses run.
 _CANCEL: set[str] = set()
+# Live subprocesses per job, so a cancel can kill a long download/ffmpeg immediately.
+_PROCS: dict[str, set] = {}
 
 
 def request_cancel(job_id: str) -> None:
     _CANCEL.add(job_id)
+    for p in list(_PROCS.get(job_id, ())):   # kill any running subprocess for this job now
+        try:
+            p.terminate()
+        except Exception:
+            pass
 
 
 def clear_cancel(job_id: str) -> None:
@@ -27,6 +38,19 @@ def clear_cancel(job_id: str) -> None:
 
 def is_cancelled(job_id: str) -> bool:
     return job_id in _CANCEL
+
+
+def raise_if_cancelled(job_id: str) -> None:
+    if job_id in _CANCEL:
+        raise JobCancelled()
+
+
+def register_proc(job_id: str, proc) -> None:
+    _PROCS.setdefault(job_id, set()).add(proc)
+
+
+def unregister_proc(job_id: str, proc) -> None:
+    _PROCS.get(job_id, set()).discard(proc)
 
 
 def delete_job(job_id: str) -> None:

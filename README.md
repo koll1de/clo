@@ -12,8 +12,9 @@ Runs **entirely locally** on your PC and GPU — no paid APIs.
    - your mic (laughter + excitement),
    - Twitch chat bursts / emote spikes,
    - kill-feed (aces, multi-kills, deagle head-shot strings, bot kills).
-4. **Edit & render** — vertical 9:16 reframe, zoom-punch-ins, speed ramps, sound effects,
-   kill-feed highlights, intro hook, the question-card overlay, optional captions (toggle + font picker).
+4. **Edit & render** — vertical 9:16 reframe, zoom-punch-ins, speed ramps, a mood-picked
+   ducked music bed (skipped where the source already has music), kill-feed highlights,
+   intro hook, the question-card overlay, optional captions (toggle + font picker).
 5. **Review** — preview every candidate clip, approve/reject, or type a change request and the AI re-edits.
 6. **Publish** — approved clips auto-upload to YouTube Shorts and drop into TikTok drafts.
 
@@ -46,7 +47,7 @@ backend/            FastAPI app + pipeline
   store.py          local SQLite job/clip storage
   models.py         data schemas
 frontend/           browser UI (review gallery)
-assets/             fonts, sound effects
+assets/             fonts, music
 data/               VODs, rendered clips, working files, app.db   (git-ignored)
 config.yaml         all settings
 ```

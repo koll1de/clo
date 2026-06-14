@@ -52,8 +52,6 @@ class Clip(BaseModel):
     question_highlights: list[str] = Field(default_factory=list)  # words to gold-highlight
     audio_peak: Optional[float] = None       # source-seconds of the loudest beat in the clip
     audio_level: float = 0.0                 # vocal-reaction loudness (x baseline); 0 = none detected
-    sfx: str = ""                            # name of a sound effect the AI chose to add (or "")
-    sfx_time: float = 0.0                    # absolute source-seconds where the SFX should hit
     music: str = ""                          # AI-chosen background mood: '', 'calm', or 'hype'
     layout: str = "facecam"                  # AI-chosen frame: 'facecam' or 'gameplay' (no cam)
     signals: list[str] = Field(default_factory=list)  # corroborating signals: audio, chat, killfeed

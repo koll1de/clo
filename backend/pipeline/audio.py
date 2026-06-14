@@ -8,13 +8,14 @@ reactions the transcript brain alone would miss.
 """
 from __future__ import annotations
 
+import functools
 import wave
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
-from ..config import Paths
+from ..config import CONFIG, Paths
 from ..ffmpeg import extract_audio
 
 
@@ -100,3 +101,58 @@ def find_reactions(
     # strongest first
     reactions.sort(key=lambda r: r.level, reverse=True)
     return reactions
+
+
+@functools.lru_cache(maxsize=2)
+def _load_job_wav(job_id: str) -> tuple[np.ndarray, int]:
+    """The transcribe-stage wav for a job (cached — segment_has_music is called per clip)."""
+    for name in (f"{job_id}.wav", f"{job_id}.audio.wav"):
+        p = Paths.work / name
+        if p.exists():
+            return _load_wav_mono16k(p)
+    return np.zeros(0, dtype=np.float32), 16000
+
+
+def _onset_envelope(seg: np.ndarray, win: int = 1024, hop: int = 512) -> np.ndarray:
+    """Spectral-flux onset strength per frame — the rhythmic 'pulse' of the audio."""
+    if seg.size < win * 4:
+        return np.zeros(0, dtype=np.float32)
+    n = 1 + (seg.size - win) // hop
+    w = np.hanning(win).astype(np.float32)
+    idx = np.arange(win)[None, :] + hop * np.arange(n)[:, None]
+    mag = np.abs(np.fft.rfft(seg[idx] * w, axis=1))
+    return np.maximum(0.0, mag[1:] - mag[:-1]).sum(axis=1)
+
+
+def segment_has_music(job_id: str, start: float, end: float) -> bool:
+    """Best-effort: does the SOURCE already have music playing in [start,end]? Music has a
+    steady beat, so the onset envelope auto-correlates strongly at a musical tempo (50-200
+    BPM); speech and sporadic game audio don't. Used to avoid laying our bed over a part
+    where he already has a track on (no double music). Conservative — returns False when
+    unsure so we don't wrongly suppress the bed on a silent/ambiguous clip."""
+    if not job_id:
+        return False
+    data, sr = _load_job_wav(job_id)
+    if data.size == 0:
+        return False
+    seg = data[max(0, int(start * sr)): min(data.size, int(end * sr))]
+    if seg.size < sr * 3:                                   # too short to judge a tempo
+        return False
+    if float(np.sqrt(np.mean(seg * seg) + 1e-12)) < 0.01:  # near-silence -> no music
+        return False
+    flux = _onset_envelope(seg)
+    if flux.size < 40:
+        return False
+    flux = flux - flux.mean()
+    ac = np.correlate(flux, flux, mode="full")[flux.size - 1:]
+    if ac[0] <= 0:
+        return False
+    ac = ac / ac[0]
+    hop_s = 512 / sr
+    lo = max(1, int(round(0.30 / hop_s)))                  # 200 BPM
+    hi = min(ac.size - 1, int(round(1.20 / hop_s)))        # 50 BPM
+    if hi <= lo:
+        return False
+    strength = float(np.max(ac[lo:hi]))                    # 0..1; higher = more beat-like
+    thresh = float(CONFIG.get("music", {}).get("source_detect_strength", 0.32))
+    return strength >= thresh

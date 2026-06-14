@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from .. import store
 from ..config import CONFIG, Paths
 from ..ffmpeg import extract_audio
 from ..models import Job
@@ -78,6 +79,7 @@ def transcribe(job: Job) -> Job:
         "segments": [],
     }
     for seg in segments:
+        store.raise_if_cancelled(job.id)   # STOP works during the (slow) transcription loop
         out["segments"].append({
             "start": seg.start,
             "end": seg.end,

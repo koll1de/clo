@@ -10,8 +10,10 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 
+from .. import store
 from ..config import CONFIG, Paths
 from ..ffmpeg import ffmpeg_bin, probe_duration
 from ..models import Job
@@ -72,7 +74,11 @@ def _ytdlp_extra_args(url: str) -> list[str]:
     yt-dlp needs it to merge video+audio). YouTube increasingly demands authentication
     ('Sign in to confirm you're not a bot'); the reliable bypass is the user's logged-in
     cookies — a cookies.txt (cookies_file) or pulled live from a browser profile
-    (cookies_from_browser: chrome|edge|firefox|brave|...). Both configured under `ingest`."""
+    (cookies_from_browser: chrome|edge|firefox|brave|...). Both configured under `ingest`.
+    YouTube also gates the real video formats behind a JS "n challenge"; unsolved, downloads
+    are throttled to ~tens of KiB/s or only storyboards appear. Solving it needs a JS runtime
+    (node, present on this machine) plus yt-dlp's EJS solver component (fetched from GitHub) —
+    enabled by `ingest.youtube_challenge_solver` (runs external JS, so it's opt-in)."""
     args = ["--ffmpeg-location", os.path.dirname(ffmpeg_bin())]
     icfg = CONFIG.get("ingest", {})
     cookies_file = str(icfg.get("cookies_file") or "").strip()
@@ -81,6 +87,10 @@ def _ytdlp_extra_args(url: str) -> list[str]:
         args += ["--cookies", cookies_file]
     elif browser:
         args += ["--cookies-from-browser", browser]
+    # n-challenge solver (full-speed 1080p instead of the throttled/storyboard fallback)
+    if "youtube.com" in url or "youtu.be" in url:
+        if icfg.get("youtube_challenge_solver", True):
+            args += ["--js-runtimes", "node", "--remote-components", "ejs:github"]
     return args
 
 
@@ -111,10 +121,32 @@ def ingest(job: Job) -> Job:
             *_ytdlp_extra_args(job.source),
             job.source,
         ]
-        proc = subprocess.run(cmd, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace")
+        # Cancellable download: yt-dlp is chatty, so log to a file (a piped buffer would
+        # deadlock while we poll) and poll the cancel flag so STOP kills the download at once.
+        logf_path = Paths.work / f"{job.id}.ytdlp.log"
+        with open(logf_path, "w", encoding="utf-8", errors="replace") as logf:
+            proc = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT)
+            store.register_proc(job.id, proc)
+            try:
+                while proc.poll() is None:
+                    if store.is_cancelled(job.id):
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=5)
+                        except Exception:
+                            proc.kill()
+                        break
+                    time.sleep(0.4)
+            finally:
+                store.unregister_proc(job.id, proc)
+        store.raise_if_cancelled(job.id)   # cancelled mid-download -> JobCancelled, not "failed"
         if proc.returncode != 0:
-            raise RuntimeError(f"yt-dlp failed:\n{proc.stderr[-2000:]}")
+            tail = ""
+            try:
+                tail = logf_path.read_text(encoding="utf-8", errors="replace")[-2000:]
+            except Exception:
+                pass
+            raise RuntimeError(f"yt-dlp failed:\n{tail}")
         if not out.exists():
             # yt-dlp can exit 0 yet leave unmerged stream fragments (e.g. when the
             # merge step silently can't run). Surface what landed, then clean it up so
